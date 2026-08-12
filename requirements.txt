@@ -1,0 +1,30 @@
+# --- UI ---
+streamlit>=1.38,<2.0
+
+# --- Orchestration ---
+langgraph>=0.2.45,<0.3
+
+# --- Data ---
+pandas>=2.2,<3.0
+numpy>=1.26,<2.2
+
+# --- Visualization ---
+plotly>=5.24,<6.0
+
+# --- SQL parsing / validation ---
+sqlglot>=25.24,<26.0
+
+# --- LLM: Azure AI Foundry (Model Inference API) ---
+azure-ai-inference>=1.0.0b9
+azure-core>=1.32,<2.0
+azure-identity>=1.19,<2.0
+
+# --- LLM: OpenRouter (OpenAI-compatible HTTP API) ---
+requests>=2.32,<3.0
+
+# --- Structured data / config ---
+pydantic>=2.9,<3.0
+python-dotenv>=1.0,<2.0
+
+# --- Testing ---
+pytest>=8.3,<9.0

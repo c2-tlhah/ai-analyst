@@ -1,0 +1,15 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+logs/
+*.log
+.pytest_cache/
+.streamlit/secrets.toml
+.install-cache/
+.cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/

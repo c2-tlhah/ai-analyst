@@ -1,0 +1,116 @@
+{
+  "glossary": {
+    "customer": "Consumer customers only exist as CustomerKey on FactInternetSales; no customer dimension is loaded in this deployment.",
+    "profit": "Approximated as SalesAmount - TotalProductCost (no explicit profit column is stored).",
+    "revenue": "SalesAmount in FactInternetSales / FactResellerSales.",
+    "sales channel": "'Internet' = FactInternetSales (direct consumer), 'Reseller' = FactResellerSales (B2B/dealer)."
+  },
+  "tables": {
+    "DimProduct": {
+      "columns": {
+        "Class": "Quality tier classification of the product (e.g. L=Low, M=Medium, H=High).",
+        "Color": "Product color.",
+        "DaysToManufacture": "Lead time in days required to manufacture one unit.",
+        "DealerPrice": "Wholesale price offered to dealers/resellers.",
+        "EndDate": "Date this product record stopped being effective (NULL if still active).",
+        "FinishedGoodsFlag": "1 if the product is a sellable finished good, 0 if it is a component.",
+        "ListPrice": "Manufacturer's suggested retail list price per unit.",
+        "ModelName": "Product model family name; groups size/color variants of the same model.",
+        "ProductAlternateKey": "Natural business product code (SKU) from the source system.",
+        "ProductDescription": "Marketing description of the product.",
+        "ProductKey": "Surrogate primary key uniquely identifying a product.",
+        "ProductLine": "High-level product line code (e.g. R=Road, M=Mountain, T=Touring, S=Standard).",
+        "ProductName": "Customer-facing product name.",
+        "ProductSubcategoryKey": "Key of the product subcategory this product belongs to (grouping key).",
+        "ReorderPoint": "Inventory level at which the product should be reordered.",
+        "SafetyStockLevel": "Inventory planning safety-stock threshold.",
+        "Size": "Product size label.",
+        "SizeRange": "Product size range/category.",
+        "StandardCost": "Standard (budgeted) manufacturing cost per unit.",
+        "StartDate": "Date this product record became effective.",
+        "Status": "Current lifecycle status of the product (e.g. Current, Discontinued).",
+        "Style": "Target fit/style of the product (e.g. U=Unisex, M=Men's, W=Women's).",
+        "Weight": "Product weight."
+      },
+      "description": "Product dimension. One row per product sold by AdventureWorks, including pricing, cost, physical attributes and lifecycle status.",
+      "source": "curated"
+    },
+    "FactInternetSales": {
+      "aggregation_overrides": {
+        "TotalProductCost": "sum",
+        "UnitPrice": "avg",
+        "UnitPriceDiscountPct": "avg"
+      },
+      "columns": {
+        "CarrierTrackingNumber": "Shipping carrier tracking number.",
+        "CurrencyKey": "Identifier of the transaction currency.",
+        "CustomerKey": "Identifier of the purchasing consumer customer.",
+        "CustomerPONumber": "Customer purchase-order reference number.",
+        "DiscountAmount": "Discount amount applied to the line.",
+        "DueDate": "Calendar date the order was due.",
+        "DueDateKey": "Integer YYYYMMDD key for the due date.",
+        "ExtendedAmount": "UnitPrice * OrderQuantity before discount.",
+        "Freight": "Freight/shipping charge on the line.",
+        "InternetSalesKey": "Surrogate primary key of the sales order line.",
+        "OrderDate": "Calendar date the order was placed.",
+        "OrderDateKey": "Integer YYYYMMDD key for the order date.",
+        "OrderQuantity": "Number of units ordered on this line.",
+        "ProductKey": "Product sold on this line (foreign key to DimProduct).",
+        "ProductStandardCost": "Standard cost per unit at time of sale.",
+        "PromotionKey": "Identifier of the promotion/discount campaign applied, if any.",
+        "SalesAmount": "Net revenue recognized for this line. Primary revenue measure.",
+        "SalesOrderLineNumber": "Line number within the order.",
+        "SalesOrderNumber": "Business order number.",
+        "SalesTerritoryKey": "Identifier of the sales territory/region attributed to the order.",
+        "ShipDate": "Calendar date the order shipped.",
+        "ShipDateKey": "Integer YYYYMMDD key for the ship date.",
+        "TaxAmt": "Tax charged on the line.",
+        "TotalProductCost": "Total standard cost for the line (ProductStandardCost * OrderQuantity).",
+        "UnitPrice": "Price charged per unit.",
+        "UnitPriceDiscountPct": "Discount percentage applied to the unit price."
+      },
+      "default_measure": "SalesAmount",
+      "description": "Direct-to-consumer online ('Internet channel') sales order lines. Grain: one row per sales order line.",
+      "source": "curated"
+    },
+    "FactResellerSales": {
+      "aggregation_overrides": {
+        "TotalProductCost": "sum",
+        "UnitPrice": "avg",
+        "UnitPriceDiscountPct": "avg"
+      },
+      "columns": {
+        "CarrierTrackingNumber": "Shipping carrier tracking number.",
+        "CurrencyKey": "Identifier of the transaction currency.",
+        "CustomerPONumber": "Customer purchase-order reference number.",
+        "DiscountAmount": "Discount amount applied to the line.",
+        "DueDate": "Calendar date the order was due.",
+        "DueDateKey": "Integer YYYYMMDD key for the due date.",
+        "EmployeeKey": "Identifier of the AdventureWorks sales employee who owns the order.",
+        "ExtendedAmount": "UnitPrice * OrderQuantity before discount.",
+        "Freight": "Freight/shipping charge on the line.",
+        "OrderDate": "Calendar date the order was placed.",
+        "OrderDateKey": "Integer YYYYMMDD key for the order date.",
+        "OrderQuantity": "Number of units ordered on this line.",
+        "ProductKey": "Product sold on this line (foreign key to DimProduct).",
+        "ProductStandardCost": "Standard cost per unit at time of sale.",
+        "PromotionKey": "Identifier of the promotion/discount campaign applied, if any.",
+        "ResellerKey": "Identifier of the reseller/dealer that purchased the product.",
+        "ResellerSalesKey": "Surrogate primary key of the sales order line.",
+        "SalesAmount": "Net revenue recognized for this line. Primary revenue measure.",
+        "SalesOrderLineNumber": "Line number within the order.",
+        "SalesOrderNumber": "Business order number.",
+        "SalesTerritoryKey": "Identifier of the sales territory/region attributed to the order.",
+        "ShipDate": "Calendar date the order shipped.",
+        "ShipDateKey": "Integer YYYYMMDD key for the ship date.",
+        "TaxAmt": "Tax charged on the line.",
+        "TotalProductCost": "Total standard cost for the line (ProductStandardCost * OrderQuantity).",
+        "UnitPrice": "Price charged per unit.",
+        "UnitPriceDiscountPct": "Discount percentage applied to the unit price."
+      },
+      "default_measure": "SalesAmount",
+      "description": "B2B sales order lines sold through reseller/dealer partners ('Reseller channel'). Grain: one row per sales order line.",
+      "source": "curated"
+    }
+  }
+}
