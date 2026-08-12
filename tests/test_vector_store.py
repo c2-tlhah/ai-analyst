@@ -101,6 +101,14 @@ def test_sync_and_query_finds_semantically_relevant_table(tmp_path, monkeypatch)
     assert matches is not None
     assert matches[0][0] == "FactInternetSales"
 
+    documents = vector_store.query_relevant_documents(
+        "how much revenue did we make", db_identity="unit_test_db", top_k=1
+    )
+    assert documents is not None
+    assert documents[0].table_name == "FactInternetSales"
+    assert documents[0].version == 1
+    assert "SalesAmount" in documents[0].content
+
 
 def test_query_returns_none_for_unindexed_database(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)

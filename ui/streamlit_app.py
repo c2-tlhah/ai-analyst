@@ -24,6 +24,8 @@ import streamlit as st
 from app.config import get_settings
 from app.orchestrator import (
     AnalysisResponse,
+    KnowledgeAnswerResponse,
+    answer_knowledge_question,
     answer_question,
     clear_session_caches,
     connect_database,
@@ -159,6 +161,14 @@ def _init_state() -> None:
         st.session_state.history = []  # list[AnalysisResponse]
     if "question_input" not in st.session_state:
         st.session_state.question_input = ""
+    if "_knowledge_input_pending" in st.session_state:
+        st.session_state.knowledge_question_input = st.session_state.pop(
+            "_knowledge_input_pending"
+        )
+    if "knowledge_question_input" not in st.session_state:
+        st.session_state.knowledge_question_input = ""
+    if "knowledge_history" not in st.session_state:
+        st.session_state.knowledge_history = []  # list[KnowledgeAnswerResponse]
     # Two-phase ask flow: a click only *requests* a question (busy=True,
     # pending_question set) and reruns immediately so the UI redraws with
     # buttons disabled before any slow work starts; the actual LLM pipeline
@@ -175,6 +185,12 @@ def _init_state() -> None:
         st.session_state.pending_llm_model = None
     if "pending_conversation_history" not in st.session_state:
         st.session_state.pending_conversation_history = None
+    if "pending_knowledge_question" not in st.session_state:
+        st.session_state.pending_knowledge_question = None
+    if "pending_knowledge_llm_provider" not in st.session_state:
+        st.session_state.pending_knowledge_llm_provider = None
+    if "pending_knowledge_llm_model" not in st.session_state:
+        st.session_state.pending_knowledge_llm_model = None
     if "generated_charts" not in st.session_state:
         st.session_state.generated_charts = {}
     if "visible_recommended_charts" not in st.session_state:
@@ -287,6 +303,71 @@ def _run_pending_question() -> None:
     st.session_state.pending_llm_provider = None
     st.session_state.pending_llm_model = None
     st.session_state.pending_conversation_history = None
+    st.session_state.busy = False
+    st.rerun()
+
+
+def _request_knowledge_question(
+    question: str,
+    llm_provider: str,
+    llm_model: str | None,
+) -> None:
+    """Queue a document-grounded question and lock both question forms."""
+    if st.session_state.busy:
+        return
+    if not question.strip():
+        _render_actionable_issue(
+            "Enter a knowledge-base question",
+            "The question is empty.",
+            (
+                "Ask what a table, column, relationship, metric, or business term means.",
+                "Use Query data for calculated values, rankings, and trends.",
+            ),
+            level="warning",
+        )
+        return
+    if not llm_model:
+        guidance = get_error_guidance(
+            "No ready LLM model is selected.", stage="configuration"
+        )
+        _render_actionable_issue(guidance.title, guidance.reason, guidance.suggestions)
+        return
+    st.session_state._knowledge_input_pending = question
+    st.session_state.pending_knowledge_question = question
+    st.session_state.pending_knowledge_llm_provider = llm_provider
+    st.session_state.pending_knowledge_llm_model = llm_model
+    st.session_state.busy = True
+    st.rerun()
+
+
+def _run_pending_knowledge_question() -> None:
+    """Run one queued document-RAG question and always release the busy guard."""
+    question = st.session_state.pending_knowledge_question
+    try:
+        with st.spinner("Retrieving knowledge documents and grounding the answer..."):
+            response = answer_knowledge_question(
+                question or "",
+                llm_provider=st.session_state.pending_knowledge_llm_provider,
+                llm_model=st.session_state.pending_knowledge_llm_model,
+            )
+    except Exception as exc:  # noqa: BLE001 - always release the UI busy state
+        guidance = get_error_guidance(exc, stage="workflow")
+        response = KnowledgeAnswerResponse(
+            status="error",
+            question=question or "",
+            error=guidance.reason,
+            error_title=guidance.title,
+            error_suggestions=guidance.suggestions,
+            llm_provider=st.session_state.pending_knowledge_llm_provider,
+            llm_model=st.session_state.pending_knowledge_llm_model,
+        )
+    st.session_state.knowledge_history.insert(0, response)
+    st.session_state.knowledge_history = st.session_state.knowledge_history[
+        :_HISTORY_TURNS_KEPT
+    ]
+    st.session_state.pending_knowledge_question = None
+    st.session_state.pending_knowledge_llm_provider = None
+    st.session_state.pending_knowledge_llm_model = None
     st.session_state.busy = False
     st.rerun()
 
@@ -607,6 +688,7 @@ def _render_sidebar(ollama_status: ServiceStatus) -> tuple[str, str | None, bool
         st.divider()
         if st.button("Clear history", width="stretch", disabled=busy):
             st.session_state.history = []
+            st.session_state.knowledge_history = []
             st.session_state.generated_charts = {}
             st.session_state.visible_recommended_charts = set()
             st.rerun()
@@ -1035,52 +1117,148 @@ def _render_response(
     )
 
 
+def _render_knowledge_response(response: KnowledgeAnswerResponse) -> None:
+    st.markdown(f"**{response.question}**")
+    provider_label = {
+        "azure_foundry": "Azure AI Foundry",
+        "ollama": "Ollama",
+        "openrouter": "OpenRouter",
+    }.get(response.llm_provider or "", response.llm_provider or "LLM")
+    status_badges = [
+        '<span class="ai-badge ai-badge-cache">🔎 document RAG</span>',
+    ]
+    if response.llm_model:
+        status_badges.append(
+            f'<span class="ai-badge ai-badge-time">{provider_label} · '
+            f'{response.llm_model}</span>'
+        )
+    if response.cache_hit:
+        status_badges.append(
+            '<span class="ai-badge ai-badge-cache">↻ served from session cache</span>'
+        )
+    elif response.status == "ok":
+        status_badges.append(
+            f'<span class="ai-badge ai-badge-live">answered in '
+            f'{response.elapsed_seconds:.1f}s</span>'
+        )
+    st.markdown("".join(status_badges), unsafe_allow_html=True)
+
+    if response.status == "error":
+        _render_actionable_issue(
+            response.error_title or "The knowledge question could not be answered",
+            response.error or "An unknown error occurred.",
+            response.error_suggestions,
+        )
+        return
+
+    st.markdown(response.answer or "No answer was returned.")
+    st.caption(
+        f"Grounded in {len(response.sources)} retrieved document(s). "
+        "Open a source below to verify the answer."
+    )
+    for source in response.sources:
+        with st.expander(
+            f"Source: {source.table_name} · knowledge base v{source.version}"
+        ):
+            st.code(source.content, language=None)
+
+
 def main() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
     _init_state()
     ollama_status = _start_required_services()
     selected_provider, selected_model, llm_ready = _render_sidebar(ollama_status)
 
-    st.title("Ask your data")
+    st.title("Ask your data & docs")
     st.caption(
-        "Ask a question in plain English. The system plans the query, validates and "
-        "runs it read-only, then summarizes and visualizes the result."
+        "Query live data through validated read-only SQL, or ask grounded questions "
+        "about the indexed business and schema documentation."
     )
 
-    with st.form(key="ask_form", clear_on_submit=False):
-        question = st.text_input(
-            "Your question",
-            key="question_input",
-            placeholder="e.g. What were total sales by product line last year?",
-            label_visibility="collapsed",
-            disabled=st.session_state.busy or not llm_ready,
+    data_tab, knowledge_tab = st.tabs(["Query data", "Ask knowledge base"])
+
+    with data_tab:
+        st.caption(
+            "Ask for totals, trends, rankings, comparisons, or records. The generated "
+            "SQL is validated and executed read-only."
         )
-        ask_clicked = st.form_submit_button(
-            "Ask",
-            type="primary",
-            disabled=st.session_state.busy or not llm_ready,
+        with st.form(key="ask_form", clear_on_submit=False):
+            question = st.text_input(
+                "Your data question",
+                key="question_input",
+                placeholder="e.g. What were total sales by product line last year?",
+                label_visibility="collapsed",
+                disabled=st.session_state.busy or not llm_ready,
+            )
+            ask_clicked = st.form_submit_button(
+                "Query data",
+                type="primary",
+                disabled=st.session_state.busy or not llm_ready,
+            )
+
+        if st.session_state.busy and st.session_state.pending_question:
+            st.caption(f"Working on: *{st.session_state.pending_question}*")
+            _run_pending_question()
+        elif ask_clicked:
+            _request_question(question, selected_provider, selected_model)
+
+        st.divider()
+        if not st.session_state.history:
+            st.caption("No data questions asked yet — try an example from the sidebar.")
+
+        for i, response in enumerate(st.session_state.history):
+            _render_response(
+                response,
+                selected_provider=selected_provider,
+                selected_model=selected_model,
+                llm_ready=llm_ready,
+            )
+            if i < len(st.session_state.history) - 1:
+                st.divider()
+
+    with knowledge_tab:
+        st.caption(
+            "Ask about tables, columns, relationships, sales channels, metric definitions, "
+            "or aggregation guidance. Relevant documents are retrieved first and supplied "
+            "to the selected LLM; this mode does not execute SQL."
+        )
+        with st.form(key="knowledge_ask_form", clear_on_submit=False):
+            knowledge_question = st.text_input(
+                "Your knowledge-base question",
+                key="knowledge_question_input",
+                placeholder="e.g. What does revenue mean, and which tables contain it?",
+                label_visibility="collapsed",
+                disabled=st.session_state.busy or not llm_ready,
+            )
+            knowledge_clicked = st.form_submit_button(
+                "Ask documentation",
+                type="primary",
+                disabled=st.session_state.busy or not llm_ready,
+            )
+        st.caption(
+            "Try: “How are internet and reseller sales different?” or "
+            "“How should SalesAmount be aggregated?”"
         )
 
-    if st.session_state.busy and st.session_state.pending_question:
-        st.caption(f"Working on: *{st.session_state.pending_question}*")
-        _run_pending_question()
-    elif ask_clicked:
-        _request_question(question, selected_provider, selected_model)
+        if st.session_state.busy and st.session_state.pending_knowledge_question:
+            st.caption(
+                f"Retrieving sources for: *{st.session_state.pending_knowledge_question}*"
+            )
+            _run_pending_knowledge_question()
+        elif knowledge_clicked:
+            _request_knowledge_question(
+                knowledge_question,
+                selected_provider,
+                selected_model,
+            )
 
-    st.divider()
-
-    if not st.session_state.history:
-        st.caption("No questions asked yet -- try one of the examples in the sidebar.")
-
-    for i, response in enumerate(st.session_state.history):
-        _render_response(
-            response,
-            selected_provider=selected_provider,
-            selected_model=selected_model,
-            llm_ready=llm_ready,
-        )
-        if i < len(st.session_state.history) - 1:
-            st.divider()
+        st.divider()
+        if not st.session_state.knowledge_history:
+            st.caption("No documentation questions asked yet.")
+        for i, response in enumerate(st.session_state.knowledge_history):
+            _render_knowledge_response(response)
+            if i < len(st.session_state.knowledge_history) - 1:
+                st.divider()
 
 
 if __name__ == "__main__":

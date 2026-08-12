@@ -157,6 +157,24 @@ plain text. The same indexed document is also available beside each table in
 not require a configured LLM; an available LLM only improves generated
 descriptions.
 
+### Ask the knowledge base with document RAG
+
+The main page has separate **Query data** and **Ask knowledge base** tabs.
+The knowledge tab is for questions such as “What does revenue mean?”, “How
+are internet and reseller sales different?”, or “How should SalesAmount be
+aggregated?”. The backend embeds the question, retrieves up to four relevant
+documents from the latest Chroma version, and gives only those documents to
+the selected Azure AI Foundry, Ollama, or OpenRouter model. Answers are
+instructed to cite their table sources, and the UI exposes the complete
+retrieved documents below every answer for verification.
+
+Document RAG never executes SQL and does not invent live totals. Questions
+that require actual calculations continue through **Query data**, where the
+existing SQL planner, read-only validator, executor, and result controls
+apply. Successful document answers are cached by database, knowledge-base
+version, provider/model, and normalized question, so rebuilding the index
+cannot return a stale answer from an earlier schema version.
+
 ### Text export
 
 Alongside the Chroma collection, every version's per-table documents are

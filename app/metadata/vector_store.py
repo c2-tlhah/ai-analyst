@@ -40,6 +40,7 @@ vector-store hiccup must never break question-answering.
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,16 @@ logger = get_logger(__name__)
 
 _client: Any = None  # lazy singleton; constructing a PersistentClient is not free
 _last_errors: dict[str, str] = {}
+
+
+@dataclass(frozen=True)
+class RetrievedDocument:
+    """One knowledge document returned by semantic similarity search."""
+
+    table_name: str
+    content: str
+    distance: float
+    version: int
 
 
 def _now_iso() -> str:
@@ -297,15 +308,14 @@ def sync_collection(metadata: dict[str, Any], *, db_identity: str) -> dict[str, 
     return version_record
 
 
-def query_relevant_tables(
+def query_relevant_documents(
     question: str, *, db_identity: str, top_k: int
-) -> list[tuple[str, float]] | None:
-    """Return ``[(table_name, distance), ...]`` from the latest version, ranked
-    most-similar first.
+) -> list[RetrievedDocument] | None:
+    """Return the latest semantically relevant knowledge documents.
 
     Returns ``None`` (never raises) when nothing is indexed yet for this
     database or the query otherwise fails -- callers should fall back to
-    lexical retrieval in that case.
+    another retrieval strategy or show an actionable build error.
     """
     from app.config import get_settings
 
@@ -321,14 +331,46 @@ def query_relevant_tables(
         count = collection.count()
         if count == 0:
             return None
-        result = collection.query(query_texts=[question], n_results=min(top_k, count))
+        result = collection.query(
+            query_texts=[question],
+            n_results=min(max(1, top_k), count),
+            include=["documents", "distances", "metadatas"],
+        )
     except Exception as exc:  # noqa: BLE001 - collection missing, backend error, etc.
         _last_errors[db_identity] = _clean_error(exc)
         return None
 
-    ids = result.get("ids", [[]])[0]
-    distances = result.get("distances", [[]])[0]
-    return list(zip(ids, distances))
+    ids = (result.get("ids") or [[]])[0]
+    contents = (result.get("documents") or [[]])[0]
+    distances = (result.get("distances") or [[]])[0]
+    hits: list[RetrievedDocument] = []
+    for index, table_name in enumerate(ids):
+        if index >= len(contents) or not contents[index]:
+            continue
+        distance = float(distances[index]) if index < len(distances) else 0.0
+        hits.append(
+            RetrievedDocument(
+                table_name=str(table_name),
+                content=str(contents[index]),
+                distance=distance,
+                version=int(latest["version"]),
+            )
+        )
+    return hits or None
+
+
+def query_relevant_tables(
+    question: str, *, db_identity: str, top_k: int
+) -> list[tuple[str, float]] | None:
+    """Return table names/distances for the SQL schema-retrieval pipeline."""
+    documents = query_relevant_documents(
+        question,
+        db_identity=db_identity,
+        top_k=top_k,
+    )
+    if not documents:
+        return None
+    return [(document.table_name, document.distance) for document in documents]
 
 
 def collection_stats(db_identity: str) -> dict[str, Any]:

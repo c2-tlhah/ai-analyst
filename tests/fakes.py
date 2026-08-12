@@ -16,17 +16,23 @@ class FakeLLMClient(LLMClient):
         fail_first_n_sql: int = 0,
         bad_sql: str = "SELECT * FROM NotATable",
         always_fail: bool = False,
+        text_response: str = "ok",
     ):
         self.sql = sql
         self.relevant_tables = relevant_tables or []
         self.fail_first_n_sql = fail_first_n_sql
         self.bad_sql = bad_sql
         self.always_fail = always_fail
+        self.text_response = text_response
         self.sql_call_count = 0
         self.calls: list[str] = []
+        self.text_calls: list[dict[str, str]] = []
 
     def complete_text(self, *, system_prompt: str, user_prompt: str) -> str:
-        return "ok"
+        self.text_calls.append(
+            {"system_prompt": system_prompt, "user_prompt": user_prompt}
+        )
+        return self.text_response
 
     def complete_json(self, *, system_prompt, user_prompt, schema, max_repair_attempts=1):
         self.calls.append(schema.__name__)
