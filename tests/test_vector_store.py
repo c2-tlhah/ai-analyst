@@ -45,6 +45,23 @@ def _metadata(schema_hash="hash-v1", extra_column=False):
         }
     return {
         "schema_hash": schema_hash,
+        "relationships": [
+            {
+                "from_table": "FactInternetSales",
+                "from_column": "ProductKey",
+                "to_table": "DimProduct",
+                "to_column": "ProductKey",
+            }
+        ],
+        "aggregation_rules": {
+            "FactInternetSales": {
+                "default_measure": "SalesAmount",
+                "measures": {"SalesAmount": "sum"},
+            }
+        },
+        "glossary": {
+            "revenue": "SalesAmount in FactInternetSales.",
+        },
         "tables": {
             "FactInternetSales": {
                 "kind": "fact",
@@ -101,7 +118,12 @@ def test_sync_collection_with_no_tables_is_a_noop(tmp_path, monkeypatch):
 def test_collection_stats_before_any_sync_reports_not_indexed(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     stats = vector_store.collection_stats("brand_new_db")
-    assert stats == {"indexed": False, "table_count": 0, "version": 0, "version_count": 0}
+    assert stats["enabled"] is True
+    assert stats["indexed"] is False
+    assert stats["status"] == "not_built"
+    assert stats["table_count"] == 0
+    assert stats["version"] == 0
+    assert stats["version_count"] == 0
 
 
 def test_unchanged_schema_reuses_the_same_version(tmp_path, monkeypatch):
@@ -150,6 +172,9 @@ def test_txt_export_written_for_every_table(tmp_path, monkeypatch):
     docs = vector_store.read_version_documents("db1", 1)
     assert set(docs) == {"FactInternetSales", "DimProduct"}
     assert "Direct consumer sales transactions" in docs["FactInternetSales"]
+    assert "Relationships:" in docs["FactInternetSales"]
+    assert "Aggregation guidance" in docs["FactInternetSales"]
+    assert "revenue: SalesAmount in FactInternetSales" in docs["FactInternetSales"]
 
     txt_dir = tmp_path / "knowledge_base_txt" / "db1" / "v1"
     assert (txt_dir / "FactInternetSales.txt").exists()
@@ -160,3 +185,19 @@ def test_txt_export_written_for_every_table(tmp_path, monkeypatch):
 def test_read_version_documents_for_missing_version_is_empty(tmp_path, monkeypatch):
     _patch(monkeypatch, tmp_path)
     assert vector_store.read_version_documents("never_indexed", 1) == {}
+
+
+def test_failed_build_reports_the_backend_reason(tmp_path, monkeypatch):
+    _patch(monkeypatch, tmp_path)
+
+    def fail_client():
+        raise ModuleNotFoundError("No module named 'chromadb'")
+
+    monkeypatch.setattr(vector_store, "_get_client", fail_client)
+    assert vector_store.sync_collection(_metadata(), db_identity="broken_db") is None
+
+    stats = vector_store.collection_stats("broken_db")
+    assert stats["status"] == "error"
+    assert stats["indexed"] is False
+    assert "ModuleNotFoundError" in stats["error"]
+    assert "chromadb" in stats["error"]

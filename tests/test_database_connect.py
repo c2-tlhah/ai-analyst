@@ -94,6 +94,27 @@ def test_connect_accepts_a_sqlite_connection_string(tmp_path, _isolated_environm
     assert connection.get_active_database_path() == copy_path.resolve()
 
 
+def test_connect_reports_vector_backend_failure_instead_of_calling_it_disabled(
+    tmp_path, _isolated_environment, monkeypatch
+):
+    real_settings = _isolated_environment
+    copy_path = tmp_path / "broken-vector.db"
+    shutil.copy(real_settings.database.path, copy_path)
+
+    def fail_client():
+        raise ModuleNotFoundError("No module named 'chromadb'")
+
+    monkeypatch.setattr(vector_store, "_get_client", fail_client)
+    result = orchestrator.connect_database(str(copy_path))
+
+    assert result.success is True
+    assert result.knowledge_base_status == "error"
+    assert result.indexed_table_count == 0
+    assert "knowledge-base build failed" in result.message
+    assert "chromadb" in result.message
+    assert "VECTOR_RAG_ENABLED=false" not in result.message
+
+
 def test_question_after_connect_is_retrieved_via_vector_rag(tmp_path, _isolated_environment):
     real_settings = _isolated_environment
     copy_path = tmp_path / "copy3.db"

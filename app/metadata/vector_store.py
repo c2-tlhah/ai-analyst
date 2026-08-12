@@ -49,6 +49,7 @@ from app.logging_config import get_logger
 logger = get_logger(__name__)
 
 _client: Any = None  # lazy singleton; constructing a PersistentClient is not free
+_last_errors: dict[str, str] = {}
 
 
 def _now_iso() -> str:
@@ -83,7 +84,9 @@ def _collection_name(db_identity: str, version: int) -> str:
     return f"schema_{db_identity}_v{version}"
 
 
-def _table_document(table_name: str, table: dict[str, Any]) -> str:
+def _table_document(
+    table_name: str, table: dict[str, Any], metadata: dict[str, Any]
+) -> str:
     """Render one table's full business-enriched metadata as embeddable text."""
     pk = ", ".join(table.get("primary_key", [])) or "none"
     lines = [
@@ -100,7 +103,50 @@ def _table_document(table_name: str, table: dict[str, Any]) -> str:
             bits.append("examples: " + ", ".join(str(v) for v in col["sample_values"][:6]))
         descriptor = f" ({', '.join(bits)})" if bits else ""
         lines.append(f"{col_name}{descriptor}: {col.get('description') or ''}")
+
+    relationships = [
+        rel
+        for rel in metadata.get("relationships", [])
+        if table_name in {rel.get("from_table"), rel.get("to_table")}
+    ]
+    if relationships:
+        lines.append("")
+        lines.append("Relationships:")
+        for rel in relationships:
+            lines.append(
+                f"- {rel['from_table']}.{rel['from_column']} -> "
+                f"{rel['to_table']}.{rel['to_column']}"
+            )
+
+    rules = metadata.get("aggregation_rules", {}).get(table_name, {})
+    measures = rules.get("measures", {})
+    if measures:
+        default_measure = rules.get("default_measure") or "none"
+        lines.append("")
+        lines.append(f"Aggregation guidance (default measure: {default_measure}):")
+        for column, aggregation in measures.items():
+            lines.append(f"- {column}: {aggregation}")
+
+    # Include only glossary definitions which explicitly refer to this table
+    # or one of its columns. This enriches semantic retrieval without copying
+    # the entire glossary into every document and making all vectors alike.
+    identifiers = [table_name, *table.get("columns", {}).keys()]
+    relevant_glossary = {
+        term: definition
+        for term, definition in metadata.get("glossary", {}).items()
+        if any(identifier.casefold() in str(definition).casefold() for identifier in identifiers)
+    }
+    if relevant_glossary:
+        lines.append("")
+        lines.append("Relevant business glossary:")
+        for term, definition in relevant_glossary.items():
+            lines.append(f"- {term}: {definition}")
     return "\n".join(lines)
+
+
+def _clean_error(exc: BaseException) -> str:
+    detail = " ".join(str(exc).split()) or "No detail was supplied by the vector backend."
+    return f"{type(exc).__name__}: {detail}"[:500]
 
 
 # ---------------------------------------------------------------------------
@@ -195,12 +241,19 @@ def sync_collection(metadata: dict[str, Any], *, db_identity: str) -> dict[str, 
     Returns the version record that's now current, or ``None`` if there was
     nothing to index or the vector backend failed (logged, never raised).
     """
+    from app.config import get_settings
+
+    if not get_settings().vector.enabled:
+        _last_errors.pop(db_identity, None)
+        return None
+
     tables = metadata.get("tables", {})
     if not tables:
+        _last_errors[db_identity] = "The schema contains no tables to index."
         return None
 
     schema_hash = metadata.get("schema_hash", "")
-    documents = {name: _table_document(name, tables[name]) for name in tables}
+    documents = {name: _table_document(name, tables[name], metadata) for name in tables}
     metadatas = [{"table": name, "kind": tables[name].get("kind", "unknown")} for name in documents]
 
     latest = _latest_version(db_identity)
@@ -227,11 +280,13 @@ def sync_collection(metadata: dict[str, Any], *, db_identity: str) -> dict[str, 
             }
             versions.append(version_record)
             _save_versions(db_identity, versions)
-    except Exception:  # noqa: BLE001 - indexing must never break a schema refresh
+    except Exception as exc:  # noqa: BLE001 - indexing must never break a schema refresh
+        _last_errors[db_identity] = _clean_error(exc)
         logger.exception("Vector store sync failed for db %s", db_identity)
         return None
 
     _write_txt_documents(db_identity, version_record["version"], documents)
+    _last_errors.pop(db_identity, None)
     logger.info(
         "Knowledge base synced: %d table(s), db %s, version %d%s",
         len(documents),
@@ -252,6 +307,11 @@ def query_relevant_tables(
     database or the query otherwise fails -- callers should fall back to
     lexical retrieval in that case.
     """
+    from app.config import get_settings
+
+    if not get_settings().vector.enabled:
+        return None
+
     latest = _latest_version(db_identity)
     if latest is None:
         return None
@@ -262,7 +322,8 @@ def query_relevant_tables(
         if count == 0:
             return None
         result = collection.query(query_texts=[question], n_results=min(top_k, count))
-    except Exception:  # noqa: BLE001 - collection missing, backend error, etc.
+    except Exception as exc:  # noqa: BLE001 - collection missing, backend error, etc.
+        _last_errors[db_identity] = _clean_error(exc)
         return None
 
     ids = result.get("ids", [[]])[0]
@@ -271,15 +332,50 @@ def query_relevant_tables(
 
 
 def collection_stats(db_identity: str) -> dict[str, Any]:
-    """Latest-version summary for a database, for UI display only."""
+    """Return an actionable knowledge-base health summary for UI/backend use."""
+    from app.config import get_settings
+
+    settings = get_settings()
     versions = _load_versions(db_identity)
-    if not versions:
-        return {"indexed": False, "table_count": 0, "version": 0, "version_count": 0}
-    latest = versions[-1]
-    return {
-        "indexed": True,
-        "table_count": len(latest.get("tables", [])),
-        "version": latest["version"],
+    base = {
+        "enabled": settings.vector.enabled,
+        "indexed": False,
+        "table_count": 0,
+        "document_count": 0,
+        "version": 0,
         "version_count": len(versions),
-        "created_at": latest.get("created_at"),
+        "status": "disabled" if not settings.vector.enabled else "not_built",
+        "error": None,
+        "text_export_path": None,
     }
+    if not settings.vector.enabled:
+        return base
+    if not versions:
+        if db_identity in _last_errors:
+            base.update(status="error", error=_last_errors[db_identity])
+        return base
+
+    latest = versions[-1]
+    version = latest["version"]
+    base.update(
+        table_count=len(latest.get("tables", [])),
+        version=version,
+        created_at=latest.get("created_at"),
+        text_export_path=str(_txt_dir(db_identity, version)),
+    )
+    if db_identity in _last_errors:
+        base.update(status="error", error=_last_errors[db_identity])
+        return base
+    try:
+        document_count = _get_client().get_collection(latest["collection"]).count()
+        if document_count <= 0:
+            raise RuntimeError("The latest vector collection is empty.")
+    except Exception as exc:  # noqa: BLE001 - health checks must be safe for the UI
+        error = _last_errors.get(db_identity) or _clean_error(exc)
+        _last_errors[db_identity] = error
+        base.update(status="error", error=error)
+        return base
+
+    _last_errors.pop(db_identity, None)
+    base.update(indexed=True, document_count=document_count, status="ready")
+    return base

@@ -144,6 +144,8 @@ class ConnectResult:
     table_count: int = 0
     indexed_table_count: int = 0
     knowledge_base_version: int = 0
+    knowledge_base_status: str = "not_built"
+    knowledge_base_error: Optional[str] = None
 
 
 def connect_database(
@@ -200,13 +202,20 @@ def connect_database(
     # (it always rebuilds under force=True); read back what that produced
     # rather than re-embedding everything a second time here.
     kb_status = vector_store.collection_stats(get_active_database_identity())
-    indexed = kb_status.get("table_count", 0)
+    indexed = kb_status.get("document_count", 0) if kb_status.get("indexed") else 0
     version_number = kb_status.get("version", 0)
-    kb_note = (
-        f"{indexed} indexed into knowledge base version {version_number}."
-        if kb_status.get("indexed")
-        else "vector indexing is disabled (VECTOR_RAG_ENABLED=false)."
-    )
+    status = kb_status.get("status", "not_built")
+    if status == "ready":
+        kb_note = f"{indexed} indexed into knowledge base version {version_number}."
+    elif status == "disabled":
+        kb_note = (
+            "the knowledge base was not built because VECTOR_RAG_ENABLED=false. "
+            "Set it to true and reconnect to enable semantic schema retrieval."
+        )
+    elif status == "error":
+        kb_note = f"the knowledge-base build failed: {kb_status.get('error') or 'unknown error'}"
+    else:
+        kb_note = "the knowledge base has not been built yet."
 
     return ConnectResult(
         success=True,
@@ -215,6 +224,24 @@ def connect_database(
         table_count=table_count,
         indexed_table_count=indexed,
         knowledge_base_version=version_number,
+        knowledge_base_status=status,
+        knowledge_base_error=kb_status.get("error"),
+    )
+
+
+def rebuild_active_knowledge_base(
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+) -> ConnectResult:
+    """Re-crawl and sync the active database's knowledge base on demand.
+
+    LLM enrichment is optional: deterministic schema documents and vector
+    indexing still work when no remote/local model is configured.
+    """
+    return connect_database(
+        str(get_active_database_path()),
+        llm_provider=llm_provider,
+        llm_model=llm_model,
     )
 
 
@@ -230,6 +257,11 @@ def get_active_database_info() -> dict[str, Any]:
         "vector_table_count": stats["table_count"],
         "vector_version": stats.get("version", 0),
         "vector_version_count": stats.get("version_count", 0),
+        "vector_enabled": stats.get("enabled", False),
+        "vector_status": stats.get("status", "not_built"),
+        "vector_error": stats.get("error"),
+        "vector_document_count": stats.get("document_count", 0),
+        "vector_text_export_path": stats.get("text_export_path"),
     }
 
 

@@ -39,7 +39,7 @@
       }
     }
   },
-  "generated_at": "2026-08-12T09:03:00.695927+00:00",
+  "generated_at": "2026-08-12T11:14:31.310197+00:00",
   "glossary": {
     "customer": "Consumer customers only exist as CustomerKey on FactInternetSales; no customer dimension is loaded in this deployment.",
     "profit": "Approximated as SalesAmount - TotalProductCost (no explicit profit column is stored).",

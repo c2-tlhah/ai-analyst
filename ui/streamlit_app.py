@@ -37,6 +37,7 @@ from app.orchestrator import (
     get_table_catalog,
     inspect_chart_options,
     list_knowledge_base_versions,
+    rebuild_active_knowledge_base,
     refresh_metadata,
 )
 from app.services import ServiceStatus, ensure_ollama_running
@@ -381,37 +382,100 @@ def _render_sidebar(ollama_status: ServiceStatus) -> tuple[str, str | None, bool
             (st.success if result.success else st.error)(result.message)
 
         db_info = get_active_database_info()
-        if db_info["vector_indexed"]:
+        kb_status = db_info["vector_status"]
+        if kb_status == "ready":
             st.caption(
-                f"🔎 Knowledge base: {db_info['vector_table_count']} table(s) indexed -- "
-                f"version {db_info['vector_version']} of {db_info['vector_version_count']} "
-                "(one version per schema change; earlier versions are kept, not overwritten)."
+                f"🔎 Knowledge base ready: {db_info['vector_document_count']} document(s), "
+                f"version {db_info['vector_version']} of {db_info['vector_version_count']}."
             )
-            if st.checkbox("📄 View knowledge base documents", key="kb_show_docs", disabled=busy):
-                versions = list_knowledge_base_versions()
-                version_options = [v["version"] for v in versions][::-1]  # latest first
+        elif kb_status == "disabled":
+            _render_actionable_issue(
+                "Semantic knowledge base is disabled",
+                "VECTOR_RAG_ENABLED is false, so questions use keyword schema matching.",
+                (
+                    "Set VECTOR_RAG_ENABLED=true in .env.",
+                    "Restart Streamlit, then click Build / rebuild active knowledge base.",
+                ),
+                level="warning",
+            )
+        elif kb_status == "error":
+            _render_actionable_issue(
+                "Knowledge-base build failed",
+                db_info["vector_error"] or "The vector backend did not report a reason.",
+                (
+                    "Click Build / rebuild active knowledge base to retry.",
+                    "Run pip install -r requirements.txt in the active virtual environment.",
+                    "Check logs/ai_analyst.log for the full backend traceback.",
+                ),
+                level="warning",
+            )
+        else:
+            st.caption("🔎 Knowledge base has not been built for this database yet.")
+
+        versions = list_knowledge_base_versions()
+        with st.expander("📚 Knowledge base explorer", expanded=False):
+            if versions:
+                version_options = [v["version"] for v in reversed(versions)]
                 if st.session_state.get("kb_version_select") not in version_options:
                     st.session_state.kb_version_select = version_options[0]
                 version_by_number = {v["version"]: v for v in versions}
                 chosen_version = st.selectbox(
-                    "Version",
+                    "Knowledge-base version",
                     version_options,
                     format_func=lambda v: (
-                        f"v{v} -- {version_by_number[v]['created_at'][:19]} "
+                        f"v{v} · {version_by_number[v]['created_at'][:19]} "
                         f"({len(version_by_number[v]['tables'])} table(s))"
-                        + (" (current)" if v == db_info["vector_version"] else "")
+                        + (" · current" if v == db_info["vector_version"] else "")
                     ),
                     key="kb_version_select",
+                    disabled=busy,
                 )
-                st.caption(
-                    "Saved as plain text under "
-                    f"`vector_store/knowledge_base_txt/.../v{chosen_version}/`."
+                docs = get_knowledge_base_documents(chosen_version)
+                document_filter = st.text_input(
+                    "Filter documents",
+                    key="kb_document_filter",
+                    placeholder="Table, column, relationship, or business term",
+                    disabled=busy,
+                ).strip().casefold()
+                visible_docs = {
+                    name: text
+                    for name, text in docs.items()
+                    if not document_filter
+                    or document_filter in name.casefold()
+                    or document_filter in text.casefold()
+                }
+                combined_docs = "\n\n".join(
+                    f"{'=' * 70}\n{name}\n{'=' * 70}\n{text}"
+                    for name, text in sorted(docs.items())
                 )
-                for table_name, text in get_knowledge_base_documents(chosen_version).items():
-                    with st.expander(table_name):
-                        st.code(text, language=None)
-        else:
-            st.caption("🔎 Knowledge base: not indexed yet -- connect to build it.")
+                st.download_button(
+                    "Download all documents",
+                    data=combined_docs.encode("utf-8"),
+                    file_name=f"knowledge_base_v{chosen_version}.txt",
+                    mime="text/plain",
+                    width="stretch",
+                    disabled=busy or not docs,
+                    key=f"kb_download::{chosen_version}",
+                )
+                if not visible_docs:
+                    st.info("No document matches that filter. Try a table or column name.")
+                for table_name, text in visible_docs.items():
+                    st.markdown(f"**{table_name}**")
+                    st.text_area(
+                        f"{table_name} knowledge document",
+                        value=text,
+                        height=220,
+                        disabled=True,
+                        label_visibility="collapsed",
+                        key=f"kb_doc::{chosen_version}::{table_name}",
+                    )
+                if db_info.get("vector_text_export_path"):
+                    st.caption(f"Text export: {db_info['vector_text_export_path']}")
+            else:
+                st.info(
+                    "No knowledge documents exist yet. Build the active database below; "
+                    "an LLM is optional for schema indexing."
+                )
 
         with st.form(key="db_connect_form", clear_on_submit=False):
             st.text_input(
@@ -422,8 +486,9 @@ def _render_sidebar(ollama_status: ServiceStatus) -> tuple[str, str | None, bool
             )
             connect_clicked = st.form_submit_button(
                 "Connect & build knowledge base",
-                disabled=busy or not llm_ready,
+                disabled=busy,
             )
+            st.caption("Schema indexing works without an LLM; AI descriptions are added when one is ready.")
         if connect_clicked:
             with st.spinner(
                 "Crawling schema, generating descriptions, and building the "
@@ -431,12 +496,25 @@ def _render_sidebar(ollama_status: ServiceStatus) -> tuple[str, str | None, bool
             ):
                 connect_result = connect_database(
                     st.session_state.db_source_input,
-                    llm_provider=selected_provider,
-                    llm_model=selected_model,
+                    llm_provider=selected_provider if llm_ready else None,
+                    llm_model=selected_model if llm_ready else None,
                 )
             st.session_state.db_connect_result = connect_result
             if connect_result.success and connect_result.db_path:
                 st.session_state._db_source_pending = connect_result.db_path
+            st.rerun()
+
+        if st.button(
+            "Build / rebuild active knowledge base",
+            width="stretch",
+            disabled=busy or not db_info["exists"] or not db_info["vector_enabled"],
+        ):
+            with st.spinner("Refreshing schema documents and syncing the vector index..."):
+                connect_result = rebuild_active_knowledge_base(
+                    llm_provider=selected_provider if llm_ready else None,
+                    llm_model=selected_model if llm_ready else None,
+                )
+            st.session_state.db_connect_result = connect_result
             st.rerun()
 
         st.divider()
@@ -471,10 +549,37 @@ def _render_sidebar(ollama_status: ServiceStatus) -> tuple[str, str | None, bool
         st.subheader("Available data")
         try:
             catalog = get_table_catalog()
+            current_kb_docs = (
+                get_knowledge_base_documents(db_info["vector_version"])
+                if db_info["vector_version"]
+                else {}
+            )
             for table in catalog:
                 with st.expander(f"{table['name']}  ·  {table['kind']}"):
                     st.caption(table["description"])
                     st.caption(f"~{table['row_count']:,} rows")
+                    document = current_kb_docs.get(table["name"])
+                    if document:
+                        st.markdown("**Indexed knowledge document**")
+                        st.text_area(
+                            f"{table['name']} indexed knowledge",
+                            value=document,
+                            height=180,
+                            disabled=True,
+                            label_visibility="collapsed",
+                            key=f"catalog_kb_doc::{db_info['vector_version']}::{table['name']}",
+                        )
+                        st.download_button(
+                            "Download document",
+                            data=document.encode("utf-8"),
+                            file_name=f"{table['name']}.txt",
+                            mime="text/plain",
+                            width="stretch",
+                            disabled=busy,
+                            key=f"catalog_kb_download::{db_info['vector_version']}::{table['name']}",
+                        )
+                    elif kb_status != "ready":
+                        st.caption("No indexed document yet; build the knowledge base above.")
         except Exception as exc:  # noqa: BLE001
             guidance = get_error_guidance(exc, stage="database")
             _render_actionable_issue(

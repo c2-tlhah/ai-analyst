@@ -123,9 +123,10 @@ Clicking **Connect & build knowledge base** (`app.orchestrator.connect_database`
    `app.db.connection.get_active_database_identity`) -- the "knowledge base"
    RAG retrieval searches at question time.
 
-Embeddings run entirely on-machine via Chroma's bundled ONNX MiniLM model --
-no API key, no network call per query, and no LLM token cost, so RAG
-retrieval is strictly additive to the app's token budget. Set
+Embeddings run entirely on-machine via Chroma 1.5+'s bundled ONNX MiniLM
+model -- no API key, no network call per query, and no LLM token cost, so
+RAG retrieval is strictly additive to the app's token budget. The first
+index build may download the local embedding model once. Set
 `VECTOR_RAG_ENABLED=false` in `.env` to always use the lexical fallback
 instead (see `.env.example` for `VECTOR_STORE_DIR`/`VECTOR_TOP_K`).
 
@@ -145,11 +146,16 @@ live schema's structural hash (already computed by
   exactly as they were -- nothing is deleted or silently replaced. RAG
   retrieval always searches the *latest* version.
 
-The sidebar shows "version X of Y" next to the knowledge base status, with a
-**View knowledge base documents** checkbox that lets you pick any version
-from a dropdown and expand each table to read the exact text that was
-embedded for it (`app.orchestrator.list_knowledge_base_versions` /
-`get_knowledge_base_documents`).
+The sidebar reports one of four explicit states: **ready**, **not built**,
+**disabled**, or **failed** (including the backend error and recovery steps).
+Its searchable **Knowledge base explorer** lets you select any version,
+inspect scrollable per-table documents, and download the complete version as
+plain text. The same indexed document is also available beside each table in
+**Available data**, with a per-table download
+(`app.orchestrator.list_knowledge_base_versions` /
+`get_knowledge_base_documents`). Building deterministic schema documents does
+not require a configured LLM; an available LLM only improves generated
+descriptions.
 
 ### Text export
 
