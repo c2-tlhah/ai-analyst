@@ -26,13 +26,17 @@ from app.orchestrator import (
     AnalysisResponse,
     answer_question,
     clear_session_caches,
+    connect_database,
     generate_ai_result_chart,
     generate_result_chart,
+    get_active_database_info,
     get_error_guidance,
+    get_knowledge_base_documents,
     get_llm_catalog,
     get_session_stats,
     get_table_catalog,
     inspect_chart_options,
+    list_knowledge_base_versions,
     refresh_metadata,
 )
 from app.services import ServiceStatus, ensure_ollama_running
@@ -142,6 +146,14 @@ def _start_required_services() -> ServiceStatus:
 
 
 def _init_state() -> None:
+    # A widget's session_state value can't be reassigned after that widget
+    # has rendered in the same run (Streamlit raises StreamlitAPIException),
+    # so a successful connect stashes the resolved path here and it's
+    # applied on the *next* run, before the db_source_input widget renders.
+    if "_db_source_pending" in st.session_state:
+        st.session_state.db_source_input = st.session_state.pop("_db_source_pending")
+    if "_question_input_pending" in st.session_state:
+        st.session_state.question_input = st.session_state.pop("_question_input_pending")
     if "history" not in st.session_state:
         st.session_state.history = []  # list[AnalysisResponse]
     if "question_input" not in st.session_state:
@@ -166,6 +178,10 @@ def _init_state() -> None:
         st.session_state.generated_charts = {}
     if "visible_recommended_charts" not in st.session_state:
         st.session_state.visible_recommended_charts = set()
+    if "db_source_input" not in st.session_state:
+        st.session_state.db_source_input = get_active_database_info()["path"]
+    if "db_connect_result" not in st.session_state:
+        st.session_state.db_connect_result = None
 
 
 def _response_context(response: AnalysisResponse) -> dict:
@@ -229,7 +245,10 @@ def _request_question(
         )
         _render_actionable_issue(guidance.title, guidance.reason, guidance.suggestions)
         return
-    st.session_state.question_input = question
+    # Deferred: the question_input widget has already rendered this run, and
+    # newer Streamlit raises if a widget-bound session_state key is set
+    # after that (see _init_state's _question_input_pending handling).
+    st.session_state._question_input_pending = question
     st.session_state.pending_question = question
     st.session_state.pending_llm_provider = llm_provider
     st.session_state.pending_llm_model = llm_model
@@ -356,6 +375,71 @@ def _render_sidebar(ollama_status: ServiceStatus) -> tuple[str, str | None, bool
             )
 
         st.divider()
+        st.subheader("🔌 Database connection")
+        if st.session_state.db_connect_result is not None:
+            result = st.session_state.db_connect_result
+            (st.success if result.success else st.error)(result.message)
+
+        db_info = get_active_database_info()
+        if db_info["vector_indexed"]:
+            st.caption(
+                f"🔎 Knowledge base: {db_info['vector_table_count']} table(s) indexed -- "
+                f"version {db_info['vector_version']} of {db_info['vector_version_count']} "
+                "(one version per schema change; earlier versions are kept, not overwritten)."
+            )
+            if st.checkbox("📄 View knowledge base documents", key="kb_show_docs", disabled=busy):
+                versions = list_knowledge_base_versions()
+                version_options = [v["version"] for v in versions][::-1]  # latest first
+                if st.session_state.get("kb_version_select") not in version_options:
+                    st.session_state.kb_version_select = version_options[0]
+                version_by_number = {v["version"]: v for v in versions}
+                chosen_version = st.selectbox(
+                    "Version",
+                    version_options,
+                    format_func=lambda v: (
+                        f"v{v} -- {version_by_number[v]['created_at'][:19]} "
+                        f"({len(version_by_number[v]['tables'])} table(s))"
+                        + (" (current)" if v == db_info["vector_version"] else "")
+                    ),
+                    key="kb_version_select",
+                )
+                st.caption(
+                    "Saved as plain text under "
+                    f"`vector_store/knowledge_base_txt/.../v{chosen_version}/`."
+                )
+                for table_name, text in get_knowledge_base_documents(chosen_version).items():
+                    with st.expander(table_name):
+                        st.code(text, language=None)
+        else:
+            st.caption("🔎 Knowledge base: not indexed yet -- connect to build it.")
+
+        with st.form(key="db_connect_form", clear_on_submit=False):
+            st.text_input(
+                "SQLite file path or connection string",
+                key="db_source_input",
+                placeholder="e.g. data/ai_analyst.db or sqlite:///data/ai_analyst.db",
+                disabled=busy,
+            )
+            connect_clicked = st.form_submit_button(
+                "Connect & build knowledge base",
+                disabled=busy or not llm_ready,
+            )
+        if connect_clicked:
+            with st.spinner(
+                "Crawling schema, generating descriptions, and building the "
+                "vector knowledge base..."
+            ):
+                connect_result = connect_database(
+                    st.session_state.db_source_input,
+                    llm_provider=selected_provider,
+                    llm_model=selected_model,
+                )
+            st.session_state.db_connect_result = connect_result
+            if connect_result.success and connect_result.db_path:
+                st.session_state._db_source_pending = connect_result.db_path
+            st.rerun()
+
+        st.divider()
         st.subheader("🌱 Session efficiency")
         stats = get_session_stats()
         meta_cache = stats["metadata_cache"]
@@ -436,6 +520,10 @@ def _render_badges(response: AnalysisResponse) -> None:
         badges.append(
             f'<span class="ai-badge ai-badge-time">{provider_label} · {response.llm_model}</span>'
         )
+    if response.retrieval_mode == "vector":
+        badges.append('<span class="ai-badge ai-badge-cache">🔎 RAG-retrieved schema context</span>')
+    elif response.retrieval_mode == "lexical":
+        badges.append('<span class="ai-badge ai-badge-time">🔤 keyword-matched schema context</span>')
     if response.cache_hit:
         badges.append('<span class="ai-badge ai-badge-cache">🔁 served from session cache</span>')
     elif response.status == "error":

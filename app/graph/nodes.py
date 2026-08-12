@@ -16,6 +16,7 @@ from typing import Any
 
 from app.analysis.insights import generate_insight
 from app.config import get_settings
+from app.db.connection import get_active_database_identity
 from app.db.executor import execute_sql
 from app.graph.state import AnalystState
 from app.llm.client import LLMClient, LLMError
@@ -95,14 +96,21 @@ def make_understand_intent_node(llm_client: LLMClient):
 
 
 def retrieve_relevant_metadata(state: AnalystState) -> dict[str, Any]:
+    settings = get_settings()
     intent = state.get("intent") or {}
     hinted_tables = intent.get("relevant_tables") or []
-    relevant = retrieval.get_relevant_metadata(
-        state["metadata"], state["question"], hinted_tables=hinted_tables
+    db_identity = get_active_database_identity() if settings.vector.enabled else None
+    relevant, mode = retrieval.get_relevant_metadata_with_mode(
+        state["metadata"],
+        state["question"],
+        hinted_tables=hinted_tables,
+        db_identity=db_identity,
+        top_k=settings.vector.top_k,
     )
     return {
         "relevant_metadata": relevant,
         "metadata_text": retrieval.format_metadata_for_prompt(relevant),
+        "retrieval_mode": mode,
     }
 
 
@@ -264,5 +272,6 @@ def respond_node(state: AnalystState) -> dict[str, Any]:
             "viz_plan": state.get("viz_plan"),
             "chart": state.get("chart"),
             "retry_count": state.get("retry_count", 0),
+            "retrieval_mode": state.get("retrieval_mode"),
         },
     }

@@ -6,12 +6,31 @@ the intent-understanding node produced) and returns only the slice of
 metadata that's actually relevant -- plus anything reachable from it via a
 foreign key, so joins remain possible. This is what keeps the system
 scalable to schemas far larger than the three tables shipped here.
+
+Two table-selection strategies are available:
+
+* **Lexical** (:func:`select_relevant_tables`) -- pure keyword/token overlap
+  against table/column names, descriptions, and sample values. Zero setup,
+  deterministic, and the fallback whenever no vector index is available.
+* **Vector/RAG** (:func:`select_relevant_tables_rag`) -- nearest-neighbor
+  search over table documents embedded in :mod:`app.metadata.vector_store`.
+  This generalizes to paraphrased questions that share no literal keywords
+  with the schema (e.g. "top sellers" matching a table whose description
+  says "product sales facts"), at no LLM token cost. It's tried first
+  whenever a ``db_identity`` is supplied, and falls back to the lexical
+  scorer whenever the vector store has nothing indexed yet or errors.
+
+Either way, the *output* -- a trimmed metadata dict rendered to prompt text
+via :func:`format_metadata_for_prompt` -- is identical, so callers/tests that
+don't care about retrieval strategy can ignore the distinction entirely.
 """
 
 from __future__ import annotations
 
 import re
 from typing import Any
+
+from app.metadata import vector_store
 
 _STOPWORDS = frozenset(
     {
@@ -111,14 +130,44 @@ def select_relevant_tables(
     return sorted(selected, key=lambda n: -scores.get(n, 0))
 
 
-def get_relevant_metadata(
+def select_relevant_tables_rag(
     metadata: dict[str, Any],
     question: str,
     hinted_tables: list[str] | None = None,
-) -> dict[str, Any]:
-    """Return a trimmed metadata dict containing only the relevant tables."""
-    relevant_names = set(select_relevant_tables(metadata, question, hinted_tables))
+    *,
+    db_identity: str | None = None,
+    top_k: int | None = None,
+) -> tuple[list[str], str]:
+    """Pick relevant tables via vector search, falling back to lexical scoring.
 
+    Returns ``(table_names, mode)`` where ``mode`` is ``"vector"`` or
+    ``"lexical"`` so callers can surface which strategy actually answered
+    the question (see the UI's retrieval-mode badge).
+    """
+    tables = metadata.get("tables", {})
+
+    if db_identity:
+        matches = vector_store.query_relevant_tables(
+            question, db_identity=db_identity, top_k=top_k or MAX_RELEVANT_TABLES
+        )
+        if matches:
+            selected = {name for name, _distance in matches if name in tables}
+            names_by_lower = {name.casefold(): name for name in tables}
+            for hint in hinted_tables or []:
+                canonical = names_by_lower.get(hint.casefold())
+                if canonical:
+                    selected.add(canonical)
+            if selected:
+                selected |= _related_tables(metadata, selected)
+                rank = {name: i for i, (name, _distance) in enumerate(matches)}
+                ranked_names = sorted(selected, key=lambda n: rank.get(n, len(matches)))
+                return ranked_names, "vector"
+
+    return select_relevant_tables(metadata, question, hinted_tables), "lexical"
+
+
+def _trim_metadata(metadata: dict[str, Any], relevant_names: list[str] | set[str]) -> dict[str, Any]:
+    relevant_names = set(relevant_names)
     tables = {name: metadata["tables"][name] for name in relevant_names}
     relationships = [
         rel
@@ -137,6 +186,42 @@ def get_relevant_metadata(
         "aggregation_rules": aggregation_rules,
         "glossary": metadata.get("glossary", {}),
     }
+
+
+def get_relevant_metadata(
+    metadata: dict[str, Any],
+    question: str,
+    hinted_tables: list[str] | None = None,
+    *,
+    db_identity: str | None = None,
+    top_k: int | None = None,
+) -> dict[str, Any]:
+    """Return a trimmed metadata dict containing only the relevant tables.
+
+    Without ``db_identity`` this is pure lexical scoring (unchanged
+    behavior). Passing ``db_identity`` tries vector/RAG retrieval first; see
+    :func:`get_relevant_metadata_with_mode` if the caller also wants to know
+    which strategy was used.
+    """
+    relevant_names, _mode = select_relevant_tables_rag(
+        metadata, question, hinted_tables, db_identity=db_identity, top_k=top_k
+    )
+    return _trim_metadata(metadata, relevant_names)
+
+
+def get_relevant_metadata_with_mode(
+    metadata: dict[str, Any],
+    question: str,
+    hinted_tables: list[str] | None = None,
+    *,
+    db_identity: str | None = None,
+    top_k: int | None = None,
+) -> tuple[dict[str, Any], str]:
+    """Like :func:`get_relevant_metadata`, plus which strategy answered ("vector"/"lexical")."""
+    relevant_names, mode = select_relevant_tables_rag(
+        metadata, question, hinted_tables, db_identity=db_identity, top_k=top_k
+    )
+    return _trim_metadata(metadata, relevant_names), mode
 
 
 def format_metadata_for_prompt(relevant_metadata: dict[str, Any]) -> str:

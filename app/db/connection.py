@@ -15,12 +15,13 @@ connection at all.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from app.config import get_settings
+from app.config import PROJECT_ROOT, get_settings
 from app.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +31,86 @@ class DatabaseNotFoundError(RuntimeError):
     pass
 
 
+class InvalidDatabaseSourceError(RuntimeError):
+    pass
+
+
+# The database the app talks to is normally fixed by AI_ANALYST_DB_PATH, but
+# the UI's "Connect" panel lets a user point at a different SQLite file at
+# runtime. This override is process-global (matching the existing
+# process-global metadata/answer caches in app.orchestrator) rather than
+# per-Streamlit-session -- this app is single-tenant/local by design.
+_active_db_path: Path | None = None
+
+
+def set_active_database_path(path: Path | None) -> None:
+    """Switch the database every connection/query resolves to by default."""
+    global _active_db_path
+    _active_db_path = path
+
+
+def get_active_database_path() -> Path:
+    settings = get_settings()
+    return _active_db_path or settings.database.path
+
+
+def get_active_database_identity() -> str:
+    """Stable short id for the active database, used to key its vector collection."""
+    path = get_active_database_path()
+    canonical = str(path.resolve()) if path.exists() else str(path)
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def resolve_database_source(source: str) -> Path:
+    """Normalize a user-supplied filesystem path or SQLite connection string.
+
+    Accepts a plain path (relative paths resolve against the project root,
+    matching ``AI_ANALYST_DB_PATH``) or a ``sqlite:///``/``sqlite://``/
+    ``file:`` prefixed connection string, optionally with a trailing
+    ``?mode=ro``-style query suffix.
+    """
+    raw = (source or "").strip()
+    if not raw:
+        raise InvalidDatabaseSourceError("No database path or connection string was provided.")
+
+    for prefix in ("sqlite:///", "sqlite://", "file:"):
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+    raw = raw.split("?", 1)[0].strip()
+    if not raw:
+        raise InvalidDatabaseSourceError(f"'{source}' does not name a database file.")
+
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
+
+
+def validate_database_source(source: str) -> Path:
+    """Resolve ``source`` and confirm it opens as a real, read-only SQLite database.
+
+    Raises :class:`DatabaseNotFoundError` or :class:`InvalidDatabaseSourceError`
+    with a user-facing message; returns the resolved path on success.
+    """
+    path = resolve_database_source(source)
+    if not path.exists():
+        raise DatabaseNotFoundError(f"No file found at {path}.")
+
+    try:
+        conn = open_readonly_connection(path)
+        try:
+            conn.execute("SELECT name FROM sqlite_master LIMIT 1;")
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        raise InvalidDatabaseSourceError(
+            f"{path} does not look like a valid SQLite database ({exc})."
+        ) from exc
+
+    return path
+
+
 def _db_uri(path: Path) -> str:
     return f"file:{path.as_posix()}?mode=ro"
 
@@ -37,7 +118,7 @@ def _db_uri(path: Path) -> str:
 def open_readonly_connection(db_path: Path | None = None) -> sqlite3.Connection:
     """Open a brand-new read-only connection to the analytics database."""
     settings = get_settings()
-    path = db_path or settings.database.path
+    path = db_path or get_active_database_path()
 
     if not path.exists():
         raise DatabaseNotFoundError(

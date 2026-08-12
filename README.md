@@ -43,7 +43,8 @@ each node.
 | Metadata persistence + change detection | `app/metadata/store.py` |
 | Curated business context (seed) | `app/metadata/business_context_seed.py` |
 | LLM-assisted description of new tables | `app/metadata/enrichment.py` |
-| Relevance-based metadata retrieval | `app/metadata/retrieval.py` |
+| Relevance-based metadata retrieval (lexical + vector/RAG) | `app/metadata/retrieval.py` |
+| Local vector knowledge base for schema RAG (Chroma) | `app/metadata/vector_store.py` |
 | Azure AI Foundry + Ollama + OpenRouter clients (structured JSON) | `app/llm/client.py` |
 | Structured LLM output schemas | `app/llm/schemas.py` |
 | SQL generation (LLM) | `app/sql/generator.py` |
@@ -79,12 +80,85 @@ nothing changed it's a no-op, and if a table/column was added or changed it
 automatically re-discovers and updates the store (calling the LLM only to
 describe what's new, never to redo work already cached).
 
-`app/metadata/retrieval.py` then scores tables/columns against the question's
-keywords (plus any table hints the intent step produced) and returns only the
-relevant slice -- expanded to include anything reachable via a foreign key so
-joins stay possible. This is what keeps the LLM's context small and scoped
-instead of dumping the whole schema on every call, and it works unmodified as
-more tables are added.
+`app/metadata/retrieval.py` then picks which tables are relevant to the
+question and returns only that slice -- expanded to include anything
+reachable via a foreign key so joins stay possible. This is what keeps the
+LLM's context small and scoped instead of dumping the whole schema on every
+call, and it works unmodified as more tables are added. Two selection
+strategies are available and share the same output shape:
+
+* **Vector/RAG** (preferred) -- nearest-neighbor search over table documents
+  embedded in a local Chroma collection (`app/metadata/vector_store.py`).
+  Generalizes to paraphrased questions that share no literal keywords with
+  the schema (e.g. "top sellers" matching a table described as "product
+  sales facts").
+* **Lexical** (fallback) -- keyword/token overlap against table/column
+  names, descriptions, and sample values. Used automatically whenever no
+  vector index exists yet for the active database (e.g. before the first
+  connect) or the vector backend errors.
+
+Each answer's response reports which strategy actually served it
+(`retrieval_mode`, surfaced as a badge in the UI) so this is never a silent
+behavior difference.
+
+## Database connection & the RAG knowledge base
+
+The sidebar's **Database connection** panel lets you point the app at any
+SQLite file (a plain path, or a `sqlite:///...` connection string) without
+restarting -- `AI_ANALYST_DB_PATH` in `.env` only sets the *initial* default.
+Clicking **Connect & build knowledge base** (`app.orchestrator.connect_database`):
+
+1. Validates the file opens as a real, read-only SQLite database.
+2. Makes it the active database for every subsequent query (backed by
+   `app.db.connection.set_active_database_path`) and drops the session's
+   metadata/answer caches, since they described a different database.
+3. Crawls its schema and describes it -- the same deterministic discovery +
+   LLM-assisted enrichment used at startup (`app/metadata/discovery.py`,
+   `app/metadata/enrichment.py`), so curated/cached descriptions are reused
+   and only genuinely new tables/columns cost an LLM call.
+4. Renders each table's full business-enriched metadata (description,
+   columns, types, foreign keys, sample values) to a short text document and
+   upserts it into a Chroma collection scoped to that database
+   (`app/metadata/vector_store.py`, keyed by
+   `app.db.connection.get_active_database_identity`) -- the "knowledge base"
+   RAG retrieval searches at question time.
+
+Embeddings run entirely on-machine via Chroma's bundled ONNX MiniLM model --
+no API key, no network call per query, and no LLM token cost, so RAG
+retrieval is strictly additive to the app's token budget. Set
+`VECTOR_RAG_ENABLED=false` in `.env` to always use the lexical fallback
+instead (see `.env.example` for `VECTOR_STORE_DIR`/`VECTOR_TOP_K`).
+
+### Versioning -- schema changes never overwrite the old knowledge base
+
+The knowledge base is versioned per database, one version per *actual*
+schema change, not per refresh. `app/metadata/vector_store.py` compares the
+live schema's structural hash (already computed by
+`app/metadata/discovery.py`) against the last version it built:
+
+* **Unchanged schema** (e.g. clicking **Refresh schema** with nothing new,
+  or reconnecting to the same file) -- the current version's documents are
+  refreshed in place. No new version, nothing forked.
+* **Real change** (a table or column added/changed/removed) -- a new,
+  numbered version is created (`schema_<db identity>_v<N>` as its own Chroma
+  collection). Every earlier version's collection and text export are left
+  exactly as they were -- nothing is deleted or silently replaced. RAG
+  retrieval always searches the *latest* version.
+
+The sidebar shows "version X of Y" next to the knowledge base status, with a
+**View knowledge base documents** checkbox that lets you pick any version
+from a dropdown and expand each table to read the exact text that was
+embedded for it (`app.orchestrator.list_knowledge_base_versions` /
+`get_knowledge_base_documents`).
+
+### Text export
+
+Alongside the Chroma collection, every version's per-table documents are
+also written as plain `.txt` files under
+`<VECTOR_STORE_DIR>/knowledge_base_txt/<db identity>/v<N>/` -- one file per
+table plus a combined `_all_tables.txt` -- so you can inspect, `grep`, or
+`diff` the knowledge base directly from a terminal or text editor, without
+going through the app or a Chroma client at all.
 
 ## Performance, caching & session memory
 
@@ -298,16 +372,23 @@ unauthorized tables, LIMIT enforcement), schema discovery/metadata persistence
 against the real sample database, and a full offline run of the LangGraph
 pipeline -- including the correction-retry loop and the give-up path -- using a
 deterministic fake LLM client (`tests/fakes.py`), so the orchestration logic is
-verified without any network access.
+verified without any network access. `tests/test_vector_store.py` and
+`tests/test_database_connect.py` exercise the RAG knowledge base and the
+connect/crawl/index flow against a real (temp-directory) Chroma client and a
+throwaway copy of the sample database, so they never touch the project's
+real `metadata_store/`/`vector_store/` directories or leave the active
+database pointed at a file that no longer exists once a test's temp
+directory is cleaned up.
 
 ## Extending the schema
 
 Add a table (or columns) to `data/ai_analyst.db` and just ask a question --
 `refresh_metadata()` detects the structural change via its schema hash,
 re-discovers it, asks the LLM for a business description of only what's new
-(or falls back to a humanized column name if no LLM is configured), and
-persists the update. Nothing about table/column names is hardcoded anywhere in
-the pipeline.
+(or falls back to a humanized column name if no LLM is configured), persists
+the update, and re-syncs the vector knowledge base so the new/changed table is
+searchable immediately. Nothing about table/column names is hardcoded
+anywhere in the pipeline.
 
 ## Environment variables
 

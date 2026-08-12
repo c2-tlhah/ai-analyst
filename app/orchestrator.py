@@ -17,7 +17,15 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from app.config import get_settings
-from app.db.connection import readonly_connection
+from app.db.connection import (
+    DatabaseNotFoundError,
+    InvalidDatabaseSourceError,
+    get_active_database_identity,
+    get_active_database_path,
+    readonly_connection,
+    set_active_database_path,
+    validate_database_source,
+)
 from app.db.executor import execute_sql
 from app.error_guidance import explain_error
 from app.graph.workflow import build_workflow
@@ -32,7 +40,7 @@ from app.llm.client import (
     list_ollama_models,
 )
 from app.logging_config import get_logger
-from app.metadata import enrichment, store
+from app.metadata import enrichment, store, vector_store
 from app.viz.explorer import (
     ChartBuildResult,
     ChartCapabilities,
@@ -70,6 +78,9 @@ class AnalysisResponse:
     elapsed_seconds: float = 0.0
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    # "vector" (RAG similarity search) or "lexical" (keyword fallback) --
+    # which strategy in app.metadata.retrieval picked the relevant tables.
+    retrieval_mode: Optional[str] = None
 
 
 _workflow_cache: dict[int, Any] = {}
@@ -111,17 +122,140 @@ def refresh_metadata(llm_client: Optional[LLMClient] = None, force: bool = False
         _metadata_cache["source"] = "session_cache"
         return _metadata_cache["metadata"]
 
-    settings = get_settings()
     enrich_fn = enrichment.make_llm_enrich_fn(llm_client) if llm_client else None
-    with readonly_connection(settings.database.path) as conn:
+    with readonly_connection() as conn:
         metadata, was_rebuilt = store.refresh_if_needed(conn, enrich_fn=enrich_fn, force=force)
     if was_rebuilt:
         logger.info("Metadata store rebuilt (schema change detected).")
+        if get_settings().vector.enabled:
+            vector_store.sync_collection(metadata, db_identity=get_active_database_identity())
 
     _metadata_cache["metadata"] = metadata
     _metadata_cache["checked_at"] = now
     _metadata_cache["source"] = "rebuilt" if was_rebuilt else "verified"
     return metadata
+
+
+@dataclass
+class ConnectResult:
+    success: bool
+    message: str
+    db_path: Optional[str] = None
+    table_count: int = 0
+    indexed_table_count: int = 0
+    knowledge_base_version: int = 0
+
+
+def connect_database(
+    source: str,
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
+) -> ConnectResult:
+    """Point the app at a different SQLite database from the UI.
+
+    Validates ``source`` (a filesystem path or ``sqlite:///`` connection
+    string), makes it the active database, crawls its schema (deterministic
+    discovery + LLM-assisted description of anything not already curated --
+    see ``app.metadata.enrichment``), and (re)builds its vector knowledge
+    base (``app.metadata.vector_store``) so RAG retrieval has something to
+    search on the very first question against it. A structural schema change
+    since the last time this database was indexed mints a new, numbered
+    knowledge-base version rather than overwriting the previous one.
+    """
+    try:
+        path = validate_database_source(source)
+    except (DatabaseNotFoundError, InvalidDatabaseSourceError) as exc:
+        return ConnectResult(success=False, message=str(exc))
+
+    set_active_database_path(path)
+    # A different database invalidates both process-wide caches: cached
+    # metadata described a different schema, and cached answers were run
+    # against different data.
+    _metadata_cache["metadata"] = None
+    _metadata_cache["checked_at"] = 0.0
+    _answer_cache.clear()
+
+    llm_client: Optional[LLMClient] = None
+    if llm_provider:
+        try:
+            llm_client = get_llm_client(provider=llm_provider, model=llm_model)
+        except Exception:  # noqa: BLE001 - schema crawling still works without an LLM
+            logger.warning(
+                "No LLM available for schema enrichment; new tables will get "
+                "humanized-name descriptions instead of AI-generated ones."
+            )
+
+    try:
+        metadata = refresh_metadata(llm_client, force=True)
+    except Exception as exc:  # noqa: BLE001 - surfaced to the UI, not raised
+        logger.exception("Schema discovery failed for %s", path)
+        return ConnectResult(
+            success=False,
+            message=f"Connected to {path.name}, but schema discovery failed: {exc}",
+            db_path=str(path),
+        )
+
+    table_count = len(metadata.get("tables", {}))
+    # refresh_metadata(force=True) above already synced the knowledge base
+    # (it always rebuilds under force=True); read back what that produced
+    # rather than re-embedding everything a second time here.
+    kb_status = vector_store.collection_stats(get_active_database_identity())
+    indexed = kb_status.get("table_count", 0)
+    version_number = kb_status.get("version", 0)
+    kb_note = (
+        f"{indexed} indexed into knowledge base version {version_number}."
+        if kb_status.get("indexed")
+        else "vector indexing is disabled (VECTOR_RAG_ENABLED=false)."
+    )
+
+    return ConnectResult(
+        success=True,
+        message=f"Connected to {path.name}: {table_count} table(s) discovered, {kb_note}",
+        db_path=str(path),
+        table_count=table_count,
+        indexed_table_count=indexed,
+        knowledge_base_version=version_number,
+    )
+
+
+def get_active_database_info() -> dict[str, Any]:
+    """Active database path + vector-index status, for the UI connection panel."""
+    path = get_active_database_path()
+    identity = get_active_database_identity()
+    stats = vector_store.collection_stats(identity)
+    return {
+        "path": str(path),
+        "exists": path.exists(),
+        "vector_indexed": stats["indexed"],
+        "vector_table_count": stats["table_count"],
+        "vector_version": stats.get("version", 0),
+        "vector_version_count": stats.get("version_count", 0),
+    }
+
+
+def list_knowledge_base_versions() -> list[dict[str, Any]]:
+    """Every knowledge-base version built for the active database, oldest first.
+
+    Each schema change (a column/table added, changed, or removed) mints a
+    new version rather than overwriting the last one -- this is what the
+    UI's version picker lists.
+    """
+    return vector_store.list_versions(get_active_database_identity())
+
+
+def get_knowledge_base_documents(version: Optional[int] = None) -> dict[str, str]:
+    """The human-readable per-table documents for one knowledge-base version.
+
+    Defaults to the latest version for the active database. Returns
+    ``{table_name: document_text}``, the same text that's embedded for RAG
+    retrieval and saved under ``vector_store/knowledge_base_txt/``.
+    """
+    identity = get_active_database_identity()
+    if version is None:
+        version = vector_store.collection_stats(identity).get("version", 0)
+    if not version:
+        return {}
+    return vector_store.read_version_documents(identity, version)
 
 
 def get_metadata_cache_info() -> dict[str, Any]:
@@ -140,8 +274,7 @@ def get_table_catalog() -> list[dict[str, Any]]:
     """Lightweight table catalog for UI display (no LLM call, no disk I/O once cached)."""
     metadata = _metadata_cache["metadata"] or store.load_schema_metadata()
     if metadata is None:
-        settings = get_settings()
-        with readonly_connection(settings.database.path) as conn:
+        with readonly_connection() as conn:
             metadata, _ = store.refresh_if_needed(conn)
     return store.get_table_catalog(metadata)
 
@@ -478,6 +611,7 @@ def answer_question(
         elapsed_seconds=elapsed,
         llm_provider=selected_provider,
         llm_model=selected_model,
+        retrieval_mode=payload.get("retrieval_mode"),
     )
 
     if use_cache:

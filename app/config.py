@@ -196,6 +196,24 @@ class MetadataConfig:
 
 
 @dataclass(frozen=True)
+class VectorStoreConfig:
+    """Local Chroma vector store used for RAG-based schema retrieval.
+
+    Embeddings run entirely on-machine via Chroma's bundled ONNX MiniLM
+    model -- no API key and no per-query LLM token cost. One collection is
+    kept per connected database (see ``app.db.connection.get_active_database_identity``),
+    so reconnecting to a previously-indexed database does not require
+    re-embedding.
+    """
+
+    directory: Path = field(
+        default_factory=lambda: _resolve_path(os.getenv("VECTOR_STORE_DIR", "vector_store"))
+    )
+    top_k: int = field(default_factory=lambda: _get_int("VECTOR_TOP_K", 6))
+    enabled: bool = field(default_factory=lambda: _get_bool("VECTOR_RAG_ENABLED", True))
+
+
+@dataclass(frozen=True)
 class QueryLimits:
     max_rows: int = field(default_factory=lambda: _get_int("SQL_MAX_ROWS", 5000))
     download_max_rows: int = field(
@@ -232,6 +250,7 @@ class Settings:
     )
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     metadata: MetadataConfig = field(default_factory=MetadataConfig)
+    vector: VectorStoreConfig = field(default_factory=VectorStoreConfig)
     limits: QueryLimits = field(default_factory=QueryLimits)
     ui: UIConfig = field(default_factory=UIConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)

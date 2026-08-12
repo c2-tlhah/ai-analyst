@@ -13,3 +13,4 @@ logs/
 .ruff_cache/
 .coverage
 htmlcov/
+vector_store/

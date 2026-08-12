@@ -28,6 +28,10 @@ class AnalystState(TypedDict, total=False):
     # Metadata retrieval
     relevant_metadata: Optional[dict[str, Any]]
     metadata_text: Optional[str]
+    # "vector" when RAG similarity search over the schema knowledge base
+    # picked the relevant tables, "lexical" when it fell back to keyword
+    # scoring (no vector index built yet for the active database).
+    retrieval_mode: Optional[str]
 
     # SQL generation
     sql: Optional[str]
