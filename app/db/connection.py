@@ -55,10 +55,30 @@ def get_active_database_path() -> Path:
 
 
 def get_active_database_identity() -> str:
-    """Stable short id for the active database, used to key its vector collection."""
+    """Stable id for one database file, not merely a reusable filesystem path."""
     path = get_active_database_path()
     canonical = str(path.resolve()) if path.exists() else str(path)
-    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:16]
+    try:
+        stat = path.stat()
+        file_identity = f"{stat.st_dev}:{stat.st_ino}"
+    except OSError:
+        file_identity = "missing"
+    return hashlib.sha1(
+        f"{canonical}|{file_identity}".encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def get_active_database_revision() -> str:
+    """Cheap revision token that changes when database/WAL contents change."""
+    path = get_active_database_path()
+    parts = [get_active_database_identity()]
+    for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        try:
+            stat = candidate.stat()
+            parts.append(f"{candidate.name}:{stat.st_size}:{stat.st_mtime_ns}")
+        except OSError:
+            continue
+    return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
 def resolve_database_source(source: str) -> Path:
@@ -122,7 +142,8 @@ def open_readonly_connection(db_path: Path | None = None) -> sqlite3.Connection:
 
     if not path.exists():
         raise DatabaseNotFoundError(
-            f"Database not found at {path}. Run `python scripts/build_database.py` first."
+            f"Database not found at {path}. Connect to an existing SQLite file "
+            "from the sidebar or restore the configured database path."
         )
 
     conn = sqlite3.connect(

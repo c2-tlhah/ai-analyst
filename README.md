@@ -12,24 +12,33 @@ validation/execution, Pandas processing, and chart-generation step happens in th
 ## Architecture
 
 ```
+Connect & prepare database
+   -> connect_database             (tool) read-only activation
+   -> list_databases               (tool) SQLite catalog
+   -> get_database_info            (tool) identity + file facts
+   -> inspect_database_schema      (tool) tables + columns + profiles + relationships
+   -> generate_descriptions        (tool + optional LLM enrichment)
+   -> generate_knowledge_documents (tool) plain-text source of truth
+   -> write_knowledge_documents    (tool + optional filesystem MCP/vector index)
+
 question
-   -> understand_intent        (LLM)   classify + guess relevant tables
-   -> retrieve_metadata         (deterministic)  trim schema to what's relevant
+   -> search_schema              (MCP + RAG) trim schema to what's relevant
    -> generate_sql              (LLM)   propose a SELECT statement
-   -> validate_sql               (deterministic)  security/allow-list gate
+   -> validate_readonly_sql      (MCP)   security/allow-list gate
         |-- invalid --> handle_error --(retries left)--> generate_sql  [loop]
         |                             --(exhausted)---->  give_up -> END
-   -> execute_sql                (deterministic)  read-only, limited, timed
+   -> execute_readonly_sql       (MCP)   revalidated, read-only, limited, timed
         |-- failed --> handle_error --(retries left)--> generate_sql  [loop]
         |                            --(exhausted)---->  give_up -> END
-   -> analyze_results            (LLM)   turn a DataFrame summary into an insight
-   -> plan_visualization         (LLM)   propose chart_type/x/y/color/agg
+   -> analyze_and_plan_results   (LLM)   insight + chart plan in one response
    -> generate_chart             (deterministic)  Plotly, from a fixed function set
    -> respond -> END
 ```
 
 See `app/graph/workflow.py` for the LangGraph wiring and `app/graph/nodes.py` for
-each node.
+each node. Every deterministic tool invocation produces a bounded audit record
+(name, stage, status, duration, safe arguments, summary, and error) that the UI
+can display.
 
 ### Modules
 
@@ -39,13 +48,15 @@ each node.
 | Logging | `app/logging_config.py` |
 | Read-only DB connection | `app/db/connection.py` |
 | SQL execution (limits, timeout) | `app/db/executor.py` |
+| Audited database tool registry | `app/tools/database.py` |
+| Database MCP server + in-memory protocol client | `app/mcp_server/database.py`, `app/mcp_client/database.py` |
 | Schema discovery | `app/metadata/discovery.py` |
 | Metadata persistence + change detection | `app/metadata/store.py` |
 | Curated business context (seed) | `app/metadata/business_context_seed.py` |
 | LLM-assisted description of new tables | `app/metadata/enrichment.py` |
 | Relevance-based metadata retrieval (lexical + vector/RAG) | `app/metadata/retrieval.py` |
-| Local vector knowledge base for schema RAG (Chroma) | `app/metadata/vector_store.py` |
-| Azure AI Foundry + Ollama + OpenRouter clients (structured JSON) | `app/llm/client.py` |
+| Versioned text documents + optional Chroma index | `app/metadata/vector_store.py` |
+| Azure AI Foundry + Ollama + OpenRouter + NVIDIA NIM clients | `app/llm/client.py` |
 | Structured LLM output schemas | `app/llm/schemas.py` |
 | SQL generation (LLM) | `app/sql/generator.py` |
 | SQL security/validation | `app/sql/validator.py` |
@@ -70,17 +81,21 @@ seed descriptions in `app/metadata/business_context_seed.py`, falling back to
 LLM-generated or humanized-name descriptions for anything not curated) and
 persists the result as JSON:
 
-* `metadata_store/schema_metadata.json` -- the full merged metadata the app reads.
-* `metadata_store/business_context.json` -- just the descriptions/glossary, which
-  survive schema rebuilds so curation accumulates instead of being regenerated.
+* The configured sample database retains the backward-compatible
+  `metadata_store/schema_metadata.json` and `business_context.json` files.
+* Every newly connected database uses
+  `metadata_store/databases/<database identity>/schema_metadata.json` and
+  `business_context.json`. Descriptions and glossary entries therefore never
+  leak between unrelated database files.
 
-A structural hash of the schema is stored alongside the metadata. On every
-question, `app.orchestrator.refresh_metadata()` re-hashes the live schema; if
-nothing changed it's a no-op, and if a table/column was added or changed it
-automatically re-discovers and updates the store (calling the LLM only to
-describe what's new, never to redo work already cached).
+A structural schema hash, metadata-format version, and cheap database/WAL
+fingerprint are stored alongside the metadata. The in-process metadata cache
+is periodically reverified; schema or source changes trigger bounded
+re-profiling, while the LLM is called only for genuinely undocumented schema
+objects. Answer-cache keys also include the live database/WAL revision, so an
+updated database cannot receive a stale answer from an earlier data revision.
 
-`app/metadata/retrieval.py` then picks which tables are relevant to the
+The database MCP server calls `app/metadata/retrieval.py` to pick which tables are relevant to the
 question and returns only that slice -- expanded to include anything
 reachable via a foreign key so joins stay possible. This is what keeps the
 LLM's context small and scoped instead of dumping the whole schema on every
@@ -101,34 +116,99 @@ Each answer's response reports which strategy actually served it
 (`retrieval_mode`, surfaced as a badge in the UI) so this is never a silent
 behavior difference.
 
-## Database connection & the RAG knowledge base
+### Shared relative-time semantics
+
+Before generating SQL for relative wording such as **last year**, **last
+month**, **previous week**, **today**, or an explicit rolling period, the database MCP
+server inspects the relevant fact/event date columns and resolves one explicit
+shared range. Current databases use the ordinary previous calendar year;
+historical snapshots use the calendar year preceding their latest observed
+event date. The resolved inclusive-start/exclusive-end dates are supplied to
+the SQL planner, displayed beside the answer, and checked again by MCP SQL
+validation. Queries that calculate a separate `MAX(date)` year per table or
+apply the range to only one event source are rejected and enter the bounded SQL
+correction loop instead of returning a mixed-period result.
+
+### Generic semantic correctness gates
+
+Every generated statement is checked twice: first for read-only security, then
+against capabilities discovered from the active database. The second gate
+resolves every column, enforces documented join paths (including every part of
+a composite key), blocks numeric/date operations on incompatible data, rejects
+SQLite's arbitrary non-grouped aggregate projections, preserves event rows with
+`UNION ALL` unless deduplication was requested, and verifies explicit ranking,
+limit, direction, total, and average wording. Failed checks return precise
+feedback to the bounded correction loop; they are never executed optimistically.
+
+Scalar and ranking narratives are constructed directly from executed DataFrame
+cells. Other LLM narratives are checked so every stated number exists in the
+result or its deterministic statistics; unsupported numbers cause a local,
+evidence-only summary. This separates fluent presentation from factual evidence.
+
+## Tool-driven database preparation and documentation
 
 The sidebar's **Database connection** panel lets you point the app at any
 SQLite file (a plain path, or a `sqlite:///...` connection string) without
 restarting -- `AI_ANALYST_DB_PATH` in `.env` only sets the *initial* default.
-Clicking **Connect & build knowledge base** (`app.orchestrator.connect_database`):
+Clicking **Connect & prepare database** (`app.orchestrator.connect_database`)
+runs a fixed, bounded workflow from `app/tools/database.py`:
 
 1. Validates the file opens as a real, read-only SQLite database.
 2. Makes it the active database for every subsequent query (backed by
    `app.db.connection.set_active_database_path`) and drops the session's
    metadata/answer caches, since they described a different database.
-3. Crawls its schema and describes it -- the same deterministic discovery +
+3. Lists attached databases and user tables, then inspects every table's
+   schema, column profile, and declared foreign-key relationships.
+4. Describes the schema -- the same deterministic discovery +
    LLM-assisted enrichment used at startup (`app/metadata/discovery.py`,
    `app/metadata/enrichment.py`), so curated/cached descriptions are reused
    and only genuinely new tables/columns cost an LLM call.
-4. Renders each table's full business-enriched metadata (description,
-   columns, types, foreign keys, sample values) to a short text document and
-   upserts it into a Chroma collection scoped to that database
-   (`app/metadata/vector_store.py`, keyed by
-   `app.db.connection.get_active_database_identity`) -- the "knowledge base"
-   RAG retrieval searches at question time.
+5. Renders each table's business-enriched metadata to a versioned plain-text
+   document. These files are the knowledge base's source of truth and remain
+   usable without embeddings.
+6. Optionally verifies those exact backend-selected files through the official
+   filesystem MCP server when `MCP_FILESYSTEM_ALLOW_MUTATIONS=true`. Paths must
+   remain inside both the managed version directory and a configured MCP root.
+7. Optionally upserts the same documents into a Chroma collection scoped to
+   the active database for semantic similarity search.
+
+The LLM cannot skip connection validation, choose arbitrary documentation
+paths, access unapproved tables, or bypass SQL policy. The sidebar shows every
+preparation tool and its outcome.
+
+### Unseen database behavior and scope
+
+The agent does not require AdventureWorks table names. For any readable SQLite
+database it discovers ordinary tables and views (including view dependencies), arbitrary identifier names,
+SQLite declared-type families (`BIGINT`, `DECIMAL(...)`, `DATETIME`, `BOOLEAN`,
+`VARCHAR(...)`, and others), keys, categorical samples, measures, time fields,
+flags, and aggregation hints. Declared foreign keys are preferred. When an
+imported database omitted them, unique conventional matches such as
+`orders.customer_id -> customers.customer_id` are conservatively inferred only
+when declared types are compatible and sampled source keys have strong overlap
+with a unique target key. They are labelled `inferred` with confidence in
+metadata and prompts; ambiguous, composite, orphaned, and view-to-base guesses
+are left unresolved.
+
+There is no packaged-schema SQL template or runtime business-context seed.
+Every database uses its own identity-isolated saved context, deterministic
+profiles, optional neutral LLM descriptions, and example questions generated
+from its own tables and columns. Wide-table prompt context, profile scans, row
+counts, result previews, and downloads are independently bounded. Switching
+databases clears visible result/chart history as well as backend caches.
+
+This connector currently targets SQLite and generates SQLite SQL. Supporting
+PostgreSQL, SQL Server, MySQL, or cloud warehouses requires a separate dialect
+adapter; pointing this SQLite connector at those engines is intentionally not
+attempted.
 
 Embeddings run entirely on-machine via Chroma 1.5+'s bundled ONNX MiniLM
 model -- no API key, no network call per query, and no LLM token cost, so
 RAG retrieval is strictly additive to the app's token budget. The first
 index build may download the local embedding model once. Set
-`VECTOR_RAG_ENABLED=false` in `.env` to always use the lexical fallback
-instead (see `.env.example` for `VECTOR_STORE_DIR`/`VECTOR_TOP_K`).
+`VECTOR_RAG_ENABLED=false` in `.env` to skip Chroma entirely. Generated files
+and documentation Q&A continue working through lexical document search (see
+`.env.example` for `VECTOR_STORE_DIR`/`VECTOR_TOP_K`).
 
 ### Versioning -- schema changes never overwrite the old knowledge base
 
@@ -146,8 +226,9 @@ live schema's structural hash (already computed by
   exactly as they were -- nothing is deleted or silently replaced. RAG
   retrieval always searches the *latest* version.
 
-The sidebar reports one of four explicit states: **ready**, **not built**,
-**disabled**, or **failed** (including the backend error and recovery steps).
+The sidebar distinguishes **semantically indexed**, **documents ready with
+lexical search**, **not built**, and **semantic index failed with lexical
+fallback** (including the backend error and recovery steps).
 Its searchable **Knowledge base explorer** lets you select any version,
 inspect scrollable per-table documents, and download the complete version as
 plain text. The same indexed document is also available beside each table in
@@ -157,23 +238,51 @@ plain text. The same indexed document is also available beside each table in
 not require a configured LLM; an available LLM only improves generated
 descriptions.
 
-### Ask the knowledge base with document RAG
+### Ask generated documentation
 
 The main page has separate **Query data** and **Ask knowledge base** tabs.
 The knowledge tab is for questions such as “What does revenue mean?”, “How
 are internet and reseller sales different?”, or “How should SalesAmount be
-aggregated?”. The backend embeds the question, retrieves up to four relevant
-documents from the latest Chroma version, and gives only those documents to
-the selected Azure AI Foundry, Ollama, or OpenRouter model. Answers are
-instructed to cite their table sources, and the UI exposes the complete
-retrieved documents below every answer for verification.
+aggregated?”. The backend calls the MCP `search_knowledge_documents` tool, which uses a
+healthy semantic index when available and otherwise ranks the generated text
+files lexically. It gives up to four relevant documents to the selected Azure
+AI Foundry, Ollama, OpenRouter, or NVIDIA NIM model. Answers are instructed to
+cite their table sources, and the UI exposes the complete retrieved documents
+and the search-tool audit record below every answer for verification.
 
 Document RAG never executes SQL and does not invent live totals. Questions
-that require actual calculations continue through **Query data**, where the
-existing SQL planner, read-only validator, executor, and result controls
-apply. Successful document answers are cached by database, knowledge-base
+that require actual calculations continue through **Query data**, where MCP
+performs schema RAG, SQL policy validation, and read-only execution around the
+LLM SQL planner. The in-memory MCP transport retains a real client/server
+protocol boundary without starting a subprocess for every graph node. Successful
+document answers are cached by database, knowledge-base
 version, provider/model, and normalized question, so rebuilding the index
 cannot return a stale answer from an earlier schema version.
+
+### OpenRouter model catalog
+
+The OpenRouter selector includes North Mini Code plus the curated free Liquid,
+NVIDIA Nemotron, inclusionAI Ling, Poolside Laguna, and Google Gemma models
+configured in `app/llm/client.py`. When OpenRouter is selected, the app refreshes
+those entries from the public `/api/v1/models` catalog and displays each model's
+current context window, modalities, pricing, reasoning/structured-output support,
+supported request parameters, and the generation values this app will send. A
+**Refresh OpenRouter models** button updates this metadata without restarting
+Streamlit. If discovery is temporarily unavailable, model selection continues
+using the built-in IDs and the UI clearly marks the metadata as unavailable.
+
+Free-model availability and capabilities are provider-controlled and may change.
+The existing `.env` default and any custom `OPENROUTER_MODEL` value remain
+selectable, preserving current deployments.
+
+Transient OpenRouter timeouts, HTTP 429 responses, and common HTTP 5xx failures
+are retried with a short bounded backoff (`OPENROUTER_MAX_RETRIES` and
+`OPENROUTER_RETRY_BACKOFF_SECONDS`). If retries are exhausted, the UI preserves
+the HTTP status, selected model, upstream provider metadata, and nested provider
+message instead of reducing the failure to “Provider returned error.” A provider
+outage during intent classification also stops the workflow immediately instead
+of spending another request on SQL generation that would fail for the same
+reason.
 
 ### Text export
 
@@ -201,12 +310,12 @@ them live in `app/orchestrator.py` / `app/llm/client.py`, never in the UI:
   provider and model already answered
   this run (`app.orchestrator._answer_cache`, a bounded LRU keyed on the
   normalized question text) returns the same validated `AnalysisResponse`
-  instantly, skipping the DB round-trip and all four LLM calls. Only
+  instantly, skipping the DB round-trip and both normal LLM calls. Only
   successful answers are cached -- a failed attempt is always retried for
   real. The UI surfaces this as a "🔁 served from session cache" badge.
 * **Bounded conversation memory.** The last few `{question, sql}` turns
-  from the session are threaded into the intent-understanding and
-  SQL-generation prompts (`app/graph/nodes.py::_format_history`) so short
+  from the session are threaded into the SQL-generation prompt
+  (`app/graph/nodes.py::_format_history`) so short
   follow-ups ("now break that down by year", "same but for resellers")
   don't need to restate context the model already has. This is metadata
   about *past turns*, not the schema itself -- the per-question schema
@@ -237,8 +346,8 @@ fixed set of Plotly Express calls) ever touches it.
 
 ### Interactive result exploration
 
-Each successful answer shows the retrieved table and CSV download beside its
-generated SQL. The data grid and SQL viewer use matching fixed-height,
+Each successful answer shows the retrieved table and an on-demand complete CSV
+export beside its generated SQL. The data grid and SQL viewer use matching fixed-height,
 independently scrollable panels. The **Further analysis** workspace underneath
 supports two paths:
 
@@ -274,7 +383,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# edit .env with Azure AI Foundry, Ollama, and/or OpenRouter settings (see below)
+# edit .env with Azure, Ollama, OpenRouter, and/or NVIDIA NIM settings (see below)
 
 python scripts/build_database.py   # builds data/ai_analyst.db from data/raw/*.csv
 ```
@@ -297,7 +406,7 @@ instead (`.../api/projects/<project>`, the form the portal often shows for the
 `azure-ai-projects`/agents SDKs), `app/config.py` normalizes it to the
 Model Inference API root automatically.
 
-Structured outputs (intent, SQL, insight, viz plan) are enforced via
+Structured outputs (SQL and combined insight/viz plan) are enforced via
 JSON-schema prompting + Pydantic validation with one bounded repair retry
 (`app/llm/client.py`), rather than relying on provider-specific function-calling
 support -- this keeps the client portable across whatever Foundry model you
@@ -308,10 +417,15 @@ chain-of-thought before its final `content`, and will return an empty/
 truncated answer if `max_tokens` is too small to cover both -- so
 `LLM_MAX_TOKENS` defaults to a generous 4096 rather than a typical chat-model
 default. Reasoning also means real questions take noticeably longer than a
-non-reasoning model: expect roughly 15-40s end to end for a question (four
-sequential LLM calls: intent, SQL generation, insight, visualization plan),
-confirmed against a live deployment. The UI's spinner sets this expectation
-rather than looking hung.
+non-reasoning model. A normal question now makes two sequential calls (SQL,
+then combined insight/visualization), halving the former four-call path. The
+UI's spinner sets this expectation rather than looking hung.
+
+The configured Azure `Kimi-K2.6` deployment also supports native function
+calling. The filesystem assistant uses Azure AI Inference's `tools` and
+`tool_choice` fields, preserves assistant tool-call IDs, executes approved MCP
+tools, and returns each result as a tool message until Kimi produces its final
+answer.
 
 ### Ollama (local models)
 
@@ -341,7 +455,7 @@ Set `LLM_DEFAULT_PROVIDER=ollama` and optionally `OLLAMA_MODEL=<model>` if
 backend callers that do not pass an explicit selection should use Ollama.
 Azure AI Foundry remains the default, preserving existing behavior.
 
-### OpenRouter (North Mini Code)
+### OpenRouter
 
 Add an OpenRouter API key to `.env`:
 
@@ -361,12 +475,121 @@ and optional HTTP referrer can also be configured in `.env.example`.
 Set `LLM_DEFAULT_PROVIDER=openrouter` to use it for backend calls that do not
 provide an explicit UI selection.
 
+### NVIDIA NIM cloud models
+
+Add an NVIDIA API Catalog key to `.env`:
+
+```text
+NVIDIA_API_KEY=<your-nvidia-key>
+NVIDIA_NIM_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+```
+
+Select **NVIDIA NIM (cloud)** in the sidebar. The configured Nemotron model is
+always shown together with `poolside/laguna-xs-2.1`, `z-ai/glm-5.2`, and
+`minimaxai/minimax-m3`; after authentication,
+**Refresh NVIDIA models** verifies only these explicitly approved model IDs
+against the OpenAI-compatible `/v1/models` endpoint. Unrequested catalog models
+are not added to the selector. The chat client sends NVIDIA's thinking controls
+(`chat_template_kwargs.enable_thinking` and `reasoning_budget`) together with
+the configured temperature, top-p, and output-token budget.
+
+Laguna XS 2.1 follows its separate NVIDIA request profile: `max_tokens` is
+8192, temperature is 1, top-p is 0.95, and Nemotron-specific reasoning fields
+are omitted. GLM 5.2 uses temperature 1, top-p 1, max-tokens 16384, and seed 42.
+MiniMax M3 uses temperature 1, top-p 0.95, and max-tokens 8192. All four
+approved models advertise native tool use. Tool definitions are sent through
+the same OpenAI-compatible `tools` interface when the filesystem assistant is
+used.
+
+Live endpoint tests confirmed that GLM 5.2 and MiniMax M3 support strict native
+`json_schema` responses. The analytics workflow sends each Pydantic schema as
+an OpenAI-compatible response format for those two models, then still parses
+and validates the returned object locally. Nemotron and Laguna retain the
+portable prompt + local validation + bounded repair path.
+
+Although NVIDIA's example streams tokens, the analytics backend sets
+`stream=false`: SQL and every other structured workflow result must be complete,
+parsed, and validated before the application can use it safely. The free-form
+answer remains identical; only incremental rendering is disabled. All relevant
+request values are visible under **Model parameters & capabilities** in the UI.
+See `.env.example` for timeout, discovery, retry, and reasoning settings. Set
+`LLM_DEFAULT_PROVIDER=nvidia_nim` to make NVIDIA the backend default.
+
+The NVIDIA client retries transient DNS, connection, timeout, rate-limit, and
+5xx failures with bounded exponential backoff. Model discovery, chat calls, and
+retries share one process-wide rolling budget of 60 requests per minute.
+Requests are spaced slightly over one second apart, so concurrent Streamlit
+sessions queue behind the same gate. An HTTP 429 honors `Retry-After`, or starts
+the configured shared 60-second cooldown when that header is absent. Use
+**Test connection** in the sidebar to verify local DNS resolution, authenticated
+catalog access, and the selected model without displaying the API key. If Windows reports
+`[Errno 11001] getaddrinfo failed`, run:
+
+```powershell
+Resolve-DnsName integrate.api.nvidia.com
+ipconfig /flushdns
+```
+
+If the first command repeatedly times out, the configured router/VPN DNS or a
+network policy is failing before NVIDIA can receive the request. Reconnect the
+network/VPN, use a reliable DNS resolver approved for the machine, or ask the
+network administrator to allow `integrate.api.nvidia.com`. Do not hardcode the
+endpoint IP: NVIDIA uses multiple TLS/CDN addresses that can change.
+
+The standard data-query pipeline now uses two provider requests: one generates
+SQL and one combined request produces both the business insight and recommended
+chart plan. Schema relevance is retrieved deterministically, so it no longer
+spends a separate request on intent classification. SQL correction consumes an
+additional request only when validation or execution finds a real issue.
+Database onboarding inspects all schemas, profiles, keys, and relationships in
+one read-only tool call, and descriptions of new tables are batched (12 tables
+per LLM request by default). Configure the budget through the
+`NVIDIA_NIM_REQUESTS_PER_MINUTE`, `NVIDIA_NIM_MIN_REQUEST_INTERVAL_SECONDS`,
+`NVIDIA_NIM_RATE_LIMIT_MAX_WAIT_SECONDS`, and
+`NVIDIA_NIM_429_COOLDOWN_SECONDS` settings. Configure onboarding batches with
+`METADATA_LLM_ENRICH_BATCH_SIZE`.
+
+### Filesystem MCP assistant
+
+The **Work with files (MCP)** tab connects the selected tool-capable model to
+the official `@modelcontextprotocol/server-filesystem` server. Install both
+dependency sets once:
+
+```powershell
+pip install -r requirements.txt
+cmd /c npm install
+```
+
+The database-preparation workflow can also send its generated documentation
+through this MCP server when `MCP_FILESYSTEM_ALLOW_MUTATIONS=true`. This path
+does not accept model-generated filenames: it permits only the exact files in
+the backend-managed knowledge-version directory and falls back to the local
+managed writer if MCP is unavailable. Interactive file changes still require
+the separate per-request UI approval.
+
+By default, the server can access only the project directory and only read/list/
+search/metadata tools are exposed. Configure one or more roots with
+`MCP_FILESYSTEM_ROOTS` (semicolon-separated on Windows). The backend validates
+every model-generated path itself in addition to the MCP server's root checks.
+
+Create, write, edit, and move tools require two independent approvals:
+
+1. Set `MCP_FILESYSTEM_ALLOW_MUTATIONS=true` and restart Streamlit.
+2. Enable and confirm mutations for the individual request in the UI.
+
+Delete tools and arbitrary MCP/npm packages are never exposed. File contents
+are treated as untrusted data, tool rounds and returned content are bounded,
+and the UI shows every MCP call, its arguments, result, and error status.
+
 ### Data preview and complete CSV export
 
 The result table renders only `UI_PREVIEW_ROWS` rows (200 by default) to keep
-the Streamlit page responsive. **Download complete CSV** uses a separate copy
-of the same validated, read-only SQL and is not limited by the visible preview
-or the smaller LLM/chart analysis window. Downloads have their own configurable
+the Streamlit page responsive. The selected LLM receives only five raw result
+rows plus deterministic local statistics, regardless of whether SQLite fetched
+five rows or five thousand. **Prepare complete CSV** runs a separate copy of
+the same validated, read-only SQL only when clicked; it never delays the initial
+answer and is not limited by the visible preview or the smaller LLM/chart
+analysis window. Downloads have their own configurable
 `SQL_DOWNLOAD_MAX_ROWS` safety cap (250,000 by default); the UI clearly warns
 when that cap is reached.
 
@@ -410,12 +633,31 @@ Add a table (or columns) to `data/ai_analyst.db` and just ask a question --
 `refresh_metadata()` detects the structural change via its schema hash,
 re-discovers it, asks the LLM for a business description of only what's new
 (or falls back to a humanized column name if no LLM is configured), persists
-the update, and re-syncs the vector knowledge base so the new/changed table is
-searchable immediately. Nothing about table/column names is hardcoded
+the update, refreshes the versioned knowledge documents, and optionally
+re-syncs their vector index so the new/changed table is searchable immediately.
+Nothing about table/column names is hardcoded
 anywhere in the pipeline.
 
 ## Environment variables
 
-See `.env.example` for the full list (Azure AI Foundry, Ollama, and OpenRouter
-credentials/models, database path, metadata store directory, query
+See `.env.example` for the full list (Azure AI Foundry, Ollama, OpenRouter,
+and NVIDIA NIM credentials/models, database path, metadata store directory, query
 row/timeout/retry limits, logging).
+
+### Logs and agent traces
+
+The application writes two rotating, secret-redacted diagnostics streams:
+
+- `logs/ai_analyst.log` is the readable backend log, including trace IDs.
+- `logs/agent_traces.jsonl` contains structured events for complete requests,
+  LLM/provider attempts, reasoning stages, database tools, SQL validation and
+  execution, retries, knowledge retrieval, and filesystem MCP tools.
+
+Open **Live agent logs** in Streamlit to filter one request by trace ID, watch
+new events refresh every two seconds, inspect the latest structured event, and
+download redacted traces or the application-log tail. Rotation sizes and backup
+counts are configured through `LOG_*` and `AGENT_TRACE_*` settings in
+`.env.example`. API keys, authorization headers, passwords, secrets, and tokens
+are redacted before events are retained in memory or written to disk. NVIDIA
+`request_budget` events report queue waits, calls used in the rolling window,
+remaining local permits, cooldowns, retries, and safe rate-limit headers.

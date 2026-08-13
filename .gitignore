@@ -14,3 +14,5 @@ logs/
 .coverage
 htmlcov/
 vector_store/
+metadata_store/databases/
+node_modules/

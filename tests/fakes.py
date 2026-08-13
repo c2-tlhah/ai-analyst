@@ -5,7 +5,14 @@ network access or real Azure credentials.
 from __future__ import annotations
 
 from app.llm.client import LLMClient, LLMError
-from app.llm.schemas import IntentResult, InsightResult, SQLGenerationResult, VisualizationPlan
+from app.llm.schemas import (
+    IntentResult,
+    InsightResult,
+    MetadataBatchEnrichmentResult,
+    ResultPresentation,
+    SQLGenerationResult,
+    VisualizationPlan,
+)
 
 
 class FakeLLMClient(LLMClient):
@@ -57,5 +64,18 @@ class FakeLLMClient(LLMClient):
 
         if schema is VisualizationPlan:
             return VisualizationPlan(chart_type="bar", title="Test chart", x=None, y=None)
+
+        if schema is ResultPresentation:
+            return ResultPresentation(
+                insight=InsightResult(
+                    summary="Test insight summary.", key_findings=["finding one"]
+                ),
+                visualization=VisualizationPlan(
+                    chart_type="bar", title="Test chart", x=None, y=None
+                ),
+            )
+
+        if schema is MetadataBatchEnrichmentResult:
+            return MetadataBatchEnrichmentResult(tables={})
 
         raise LLMError(f"FakeLLMClient has no canned response for schema {schema}")

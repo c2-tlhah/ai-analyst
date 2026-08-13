@@ -93,22 +93,22 @@ def _not_applicable_reason(chart_type: str, capabilities: ChartCapabilities) -> 
         return (
             "A scatter plot needs two different numeric columns, but this result has "
             f"{len(capabilities.numeric_columns)}.",
-            "Ask a follow-up that retrieves two measures, such as SalesAmount and OrderQuantity.",
+            "Ask a follow-up that retrieves two measures with numeric values.",
         )
     if chart_type == "histogram":
         return (
             "A histogram needs at least one numeric column, and this result has none.",
-            "Ask for a numeric measure such as sales amount, quantity, price, or count.",
+            "Ask for a documented numeric measure or row count.",
         )
     if chart_type == "pie":
         return (
             "A pie chart needs both a category and a numeric value in the retrieved result.",
-            "Ask for a small category breakdown with a total, such as sales by channel.",
+            "Ask for a small category breakdown with a numeric total.",
         )
     if chart_type in {"line", "area"}:
         return (
             f"A {chart_type_label(chart_type).lower()} chart needs an ordered X axis and a numeric value.",
-            "For a time trend, ask for a date plus a measure, such as monthly sales.",
+            "For a time trend, ask for a date field plus a numeric measure.",
         )
     if chart_type == "box":
         return (
@@ -203,7 +203,7 @@ def get_chart_capabilities(df: pd.DataFrame | None) -> ChartCapabilities:
             False,
             "The retrieved columns do not contain a usable measure or repeated category.",
             (
-                "Ask for a numeric measure such as sales, quantity, price, or count.",
+                "Ask for a documented numeric measure or row count.",
                 "Include a category or date breakdown to create multiple plotted points.",
             ),
             x_columns=tuple(columns),
@@ -305,7 +305,7 @@ def generate_ai_exploratory_chart(
         return _chart_failure(
             "No graph request was entered.",
             "Describe the chart type, axes, and grouping you want.",
-            "Example: Show monthly TotalSales as a line chart.",
+            "Example: Show the retrieved date and numeric measure monthly as a line chart.",
             title="Describe the graph you need",
         )
 
@@ -491,7 +491,7 @@ def build_exploratory_chart(
             return _chart_failure(
                 f"'{x}' is not a date column, so it cannot be grouped by {time_grain}.",
                 f"Available date columns: {dates}.",
-                "Choose Original dates, or ask a follow-up that includes OrderDate.",
+                "Choose Original dates, or ask a follow-up that includes a date field.",
                 title="Time grouping is not applicable",
             )
         parsed = _as_datetime(data[x])
@@ -499,7 +499,7 @@ def build_exploratory_chart(
             return _chart_failure(
                 f"Values in '{x}' could not be reliably parsed as dates.",
                 "Choose another date column or use Original dates.",
-                "Ask a follow-up that returns a valid date field such as OrderDate.",
+                "Ask a follow-up that returns a valid documented date field.",
                 title="Invalid date values",
             )
         data[x] = _time_bucket(parsed, time_grain)

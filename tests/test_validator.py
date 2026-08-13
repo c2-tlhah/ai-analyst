@@ -58,6 +58,15 @@ def test_attach_is_rejected():
     assert not result.is_valid
 
 
+def test_file_and_extension_functions_are_rejected_even_inside_select():
+    for function in ("load_extension('x')", "readfile('secret.txt')", "writefile('x','y')"):
+        result = validate_sql(
+            f"SELECT {function} FROM DimProduct", ALLOWED, max_rows=100
+        )
+        assert not result.is_valid
+        assert any("Unsafe SQLite function" in error for error in result.errors)
+
+
 def test_multiple_statements_rejected():
     result = validate_sql(
         "SELECT * FROM DimProduct; DROP TABLE DimProduct;", ALLOWED, max_rows=100
@@ -103,6 +112,28 @@ def test_non_sqlite_dialect_errors_are_actionable():
     assert "does not support TOP" in combined
     assert "does not support PostgreSQL-style ::" in combined
     assert "trailing comma" in combined
+
+
+def test_safety_keyword_scan_ignores_string_values_and_comments():
+    sql = (
+        "SELECT ProductName FROM DimProduct "
+        "WHERE ProductName IN ('DROP', 'TOP 10', 'value::text') "
+        "-- DELETE is documentation, not executable SQL"
+    )
+    result = validate_sql(sql, ALLOWED, max_rows=100)
+
+    assert result.is_valid, result.errors
+
+
+def test_safety_keyword_scan_still_rejects_executable_statements():
+    result = validate_sql(
+        "SELECT * FROM DimProduct; DELETE FROM DimProduct",
+        ALLOWED,
+        max_rows=100,
+    )
+
+    assert not result.is_valid
+    assert any("DELETE" in error for error in result.errors)
 
 
 def test_download_query_has_a_separate_larger_safety_cap():

@@ -75,6 +75,41 @@ def test_rag_skips_vector_lookup_without_db_identity(monkeypatch):
     assert selected
 
 
+def test_explicit_table_name_skips_vector_lookup_and_fk_expansion(monkeypatch):
+    metadata = _metadata(
+        2,
+        relationships=[
+            {
+                "from_table": "FactChannel0",
+                "from_column": "ChannelKey",
+                "to_table": "FactChannel1",
+                "to_column": "ChannelKey",
+            }
+        ],
+    )
+
+    def _fail(*args, **kwargs):
+        raise AssertionError("an exact table name should bypass vector lookup")
+
+    monkeypatch.setattr(retrieval.vector_store, "query_relevant_tables", _fail)
+    selected, mode = select_relevant_tables_rag(
+        metadata,
+        "Sum ChannelSalesAmount in FactChannel0",
+        db_identity="db123",
+    )
+
+    assert mode == "lexical"
+    assert selected == ["FactChannel0"]
+
+
+def test_multiple_explicit_table_names_are_kept_in_question_order():
+    selected = select_relevant_tables(
+        _metadata(3),
+        "Compare FactChannel2 with FactChannel0",
+    )
+    assert selected == ["FactChannel2", "FactChannel0"]
+
+
 def test_rag_expands_vector_matches_with_foreign_key_neighbors(monkeypatch):
     metadata = _metadata(
         2,

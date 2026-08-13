@@ -209,6 +209,33 @@ class InsightResult(BaseModel):
         return data
 
 
+class ResultPresentation(BaseModel):
+    """One LLM response containing both narrative and chart recommendation."""
+
+    insight: InsightResult
+    visualization: VisualizationPlan
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_flat_response(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        if "insight" not in data and any(
+            key in data for key in ("summary", "key_findings", "findings")
+        ):
+            data["insight"] = {
+                "summary": data.get("summary"),
+                "key_findings": data.get("key_findings", data.get("findings", [])),
+            }
+        if "visualization" not in data and "chart_type" in data:
+            data["visualization"] = {
+                key: data.get(key)
+                for key in ("chart_type", "title", "x", "y", "color", "agg", "rationale")
+            }
+        return data
+
+
 class MetadataEnrichmentResult(BaseModel):
     """Output of LLM-assisted metadata enrichment for a newly-discovered table."""
 
@@ -217,3 +244,9 @@ class MetadataEnrichmentResult(BaseModel):
         default_factory=dict,
         description="Map of column name -> one-sentence business description.",
     )
+
+
+class MetadataBatchEnrichmentResult(BaseModel):
+    """Descriptions for several newly discovered tables in one LLM response."""
+
+    tables: dict[str, MetadataEnrichmentResult] = Field(default_factory=dict)

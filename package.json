@@ -1,0 +1,8 @@
+{
+  "name": "ai-analyst-local-services",
+  "private": true,
+  "description": "Pinned local MCP server dependencies for AI Analyst",
+  "dependencies": {
+    "@modelcontextprotocol/server-filesystem": "^2026.7.10"
+  }
+}

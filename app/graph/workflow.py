@@ -1,8 +1,8 @@
 """LangGraph assembly for the analytics workflow.
 
-Pipeline: question -> understand intent -> retrieve relevant metadata ->
-generate SQL -> validate SQL -> execute SQL -> analyze results -> plan
-visualization -> generate chart -> respond.
+Pipeline: question -> retrieve relevant metadata -> generate SQL -> validate SQL
+-> execute SQL -> combined result insight + visualization plan -> generate chart
+-> respond.
 
 Validation/execution failures route to a bounded correction loop
 (``handle_error`` -> back to ``generate_sql``) instead of straight to
@@ -39,20 +39,22 @@ def build_workflow(llm_client: LLMClient):
     _configure_langchain_runtime()
     graph = StateGraph(AnalystState)
 
-    graph.add_node("understand_intent", nodes.make_understand_intent_node(llm_client))
-    graph.add_node("retrieve_metadata", nodes.retrieve_relevant_metadata)
+    graph.add_node(
+        "retrieve_metadata", nodes.make_retrieve_relevant_metadata_node(llm_client)
+    )
     graph.add_node("generate_sql", nodes.make_generate_sql_node(llm_client))
     graph.add_node("validate_sql", nodes.validate_sql_node)
     graph.add_node("execute_sql", nodes.execute_sql_node)
     graph.add_node("handle_error", nodes.handle_error_node)
     graph.add_node("give_up", nodes.give_up_node)
     graph.add_node("analyze_results", nodes.make_analyze_results_node(llm_client))
-    graph.add_node("plan_visualization", nodes.make_plan_visualization_node(llm_client))
     graph.add_node("generate_chart", nodes.generate_chart_node)
     graph.add_node("respond", nodes.respond_node)
 
-    graph.add_edge(START, "understand_intent")
-    graph.add_edge("understand_intent", "retrieve_metadata")
+    # Schema RAG already searches the user's natural-language question, so a
+    # separate LLM intent-classification call only duplicated work and consumed
+    # provider quota. Start with deterministic retrieval instead.
+    graph.add_edge(START, "retrieve_metadata")
     graph.add_edge("retrieve_metadata", "generate_sql")
     graph.add_edge("generate_sql", "validate_sql")
 
@@ -73,8 +75,8 @@ def build_workflow(llm_client: LLMClient):
     )
 
     graph.add_edge("give_up", END)
-    graph.add_edge("analyze_results", "plan_visualization")
-    graph.add_edge("plan_visualization", "generate_chart")
+    # analyze_results returns both the narrative and chart plan in one LLM call.
+    graph.add_edge("analyze_results", "generate_chart")
     graph.add_edge("generate_chart", "respond")
     graph.add_edge("respond", END)
 

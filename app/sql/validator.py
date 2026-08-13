@@ -39,6 +39,23 @@ _FORBIDDEN_KEYWORDS = (
     "REPLACE", "ATTACH", "DETACH", "PRAGMA", "VACUUM", "REINDEX",
     "GRANT", "REVOKE", "BEGIN", "COMMIT", "ROLLBACK",
 )
+_FORBIDDEN_FUNCTIONS = {
+    "load_extension",
+    "readfile",
+    "writefile",
+    "eval",
+}
+
+_NON_CODE_SQL = re.compile(
+    r"'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|`(?:``|[^`])*`|\[[^\]]*\]"
+    r"|--[^\r\n]*|/\*.*?\*/",
+    flags=re.DOTALL,
+)
+
+
+def _code_only_sql(sql: str) -> str:
+    """Mask values, quoted identifiers, and comments before text heuristics."""
+    return _NON_CODE_SQL.sub(lambda match: " " * len(match.group(0)), sql)
 
 
 @dataclass
@@ -48,6 +65,7 @@ class ValidationResult:
     sanitized_sql: str | None = None
     download_sql: str | None = None
     tables_referenced: list[str] = field(default_factory=list)
+    repairs: list[str] = field(default_factory=list)
 
 
 def _cte_alias_names(parsed: exp.Expression) -> set[str]:
@@ -96,6 +114,8 @@ def validate_sql(
     allowed_tables: set[str],
     max_rows: int,
     download_max_rows: int | None = None,
+    metadata: dict | None = None,
+    question: str = "",
 ) -> ValidationResult:
     """Validate and sanitize a candidate SQL string.
 
@@ -108,18 +128,21 @@ def validate_sql(
     if not sql:
         return ValidationResult(is_valid=False, errors=["Empty SQL statement."])
 
-    upper_sql = sql.upper()
+    code_sql = _code_only_sql(sql)
+    upper_sql = code_sql.upper()
     for kw in _FORBIDDEN_KEYWORDS:
         if _contains_keyword(upper_sql, kw):
             errors.append(f"Forbidden keyword detected: {kw}.")
 
     # Give the correction loop actionable SQLite feedback instead of only a
     # low-level parser location when a model drifts into another SQL dialect.
-    if re.search(r"\bTOP\s*(?:\(\s*\d+\s*\)|\d+)", sql, flags=re.IGNORECASE):
+    if re.search(
+        r"\bTOP\s*(?:\(\s*\d+\s*\)|\d+)", code_sql, flags=re.IGNORECASE
+    ):
         errors.append("SQLite does not support TOP; put LIMIT N at the end of the query.")
-    if "::" in sql:
+    if "::" in code_sql:
         errors.append("SQLite does not support PostgreSQL-style :: syntax.")
-    if re.search(r",\s*FROM\b", sql, flags=re.IGNORECASE):
+    if re.search(r",\s*FROM\b", code_sql, flags=re.IGNORECASE):
         errors.append("Remove the trailing comma immediately before FROM.")
 
     try:
@@ -143,6 +166,10 @@ def validate_sql(
         )
         return ValidationResult(is_valid=False, errors=errors)
 
+    for function in parsed.find_all(exp.Anonymous):
+        if function.name.casefold() in _FORBIDDEN_FUNCTIONS:
+            errors.append(f"Unsafe SQLite function is not allowed: {function.name}.")
+
     cte_names = _cte_alias_names(parsed)
     allowed_lower = {t.lower() for t in allowed_tables}
     referenced_tables: list[str] = []
@@ -163,6 +190,23 @@ def validate_sql(
     if errors:
         return ValidationResult(is_valid=False, errors=errors, tables_referenced=referenced_tables)
 
+    repairs: list[str] = []
+    if metadata is not None:
+        from app.sql.repair import repair_unambiguous_ranking
+        from app.sql.semantic_validator import validate_query_semantics
+
+        parsed, repairs = repair_unambiguous_ranking(parsed, question)
+        errors.extend(
+            validate_query_semantics(parsed, metadata=metadata, question=question)
+        )
+        if errors:
+            return ValidationResult(
+                is_valid=False,
+                errors=errors,
+                tables_referenced=referenced_tables,
+                repairs=repairs,
+            )
+
     download_sql = None
     if download_max_rows is not None:
         download_parsed = _enforce_download_limit(parsed.copy(), download_max_rows)
@@ -179,6 +223,7 @@ def validate_sql(
         sanitized_sql=sanitized,
         download_sql=download_sql,
         tables_referenced=referenced_tables,
+        repairs=repairs,
     )
 
 

@@ -51,6 +51,19 @@ def _resolve_path(raw: str) -> Path:
     return p if p.is_absolute() else (PROJECT_ROOT / p)
 
 
+def _get_path_list(name: str, default: tuple[Path, ...]) -> tuple[Path, ...]:
+    """Read an ``os.pathsep``-separated list of resolved filesystem paths."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return tuple(path.resolve() for path in default)
+    paths = []
+    for item in raw.split(os.pathsep):
+        item = item.strip().strip('"').strip("'")
+        if item:
+            paths.append(_resolve_path(item).resolve())
+    return tuple(paths) or tuple(path.resolve() for path in default)
+
+
 def _normalize_inference_endpoint(raw: str) -> str:
     """Normalize an Azure AI Foundry endpoint to the Model Inference API root.
 
@@ -159,6 +172,15 @@ class OpenRouterConfig:
     request_timeout_seconds: int = field(
         default_factory=lambda: _get_int("OPENROUTER_REQUEST_TIMEOUT_SECONDS", 180)
     )
+    discovery_timeout_seconds: int = field(
+        default_factory=lambda: _get_int("OPENROUTER_DISCOVERY_TIMEOUT_SECONDS", 8)
+    )
+    max_retries: int = field(
+        default_factory=lambda: _get_int("OPENROUTER_MAX_RETRIES", 1)
+    )
+    retry_backoff_seconds: float = field(
+        default_factory=lambda: _get_float("OPENROUTER_RETRY_BACKOFF_SECONDS", 1.5)
+    )
     http_referer: str = field(
         default_factory=lambda: os.getenv("OPENROUTER_HTTP_REFERER", "")
     )
@@ -169,6 +191,114 @@ class OpenRouterConfig:
     @property
     def is_configured(self) -> bool:
         return bool(self.base_url and self.api_key and self.model)
+
+
+@dataclass(frozen=True)
+class NvidiaNIMConfig:
+    """NVIDIA API Catalog / NIM OpenAI-compatible chat configuration."""
+
+    base_url: str = field(
+        default_factory=lambda: os.getenv(
+            "NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1"
+        ).rstrip("/")
+    )
+    api_key: str = field(default_factory=lambda: os.getenv("NVIDIA_API_KEY", ""))
+    model: str = field(
+        default_factory=lambda: os.getenv(
+            "NVIDIA_NIM_MODEL", "nvidia/nemotron-3-ultra-550b-a55b"
+        )
+    )
+    temperature: float = field(
+        default_factory=lambda: _get_float("NVIDIA_NIM_TEMPERATURE", 1.0)
+    )
+    top_p: float = field(
+        default_factory=lambda: _get_float("NVIDIA_NIM_TOP_P", 0.95)
+    )
+    max_tokens: int = field(
+        default_factory=lambda: _get_int("NVIDIA_NIM_MAX_TOKENS", 16384)
+    )
+    reasoning_enabled: bool = field(
+        default_factory=lambda: _get_bool("NVIDIA_NIM_REASONING_ENABLED", True)
+    )
+    reasoning_budget: int = field(
+        default_factory=lambda: _get_int("NVIDIA_NIM_REASONING_BUDGET", 16384)
+    )
+    request_timeout_seconds: int = field(
+        default_factory=lambda: _get_int("NVIDIA_NIM_REQUEST_TIMEOUT_SECONDS", 300)
+    )
+    discovery_timeout_seconds: int = field(
+        default_factory=lambda: _get_int("NVIDIA_NIM_DISCOVERY_TIMEOUT_SECONDS", 8)
+    )
+    max_retries: int = field(
+        default_factory=lambda: _get_int("NVIDIA_NIM_MAX_RETRIES", 2)
+    )
+    retry_backoff_seconds: float = field(
+        default_factory=lambda: _get_float("NVIDIA_NIM_RETRY_BACKOFF_SECONDS", 1.5)
+    )
+    requests_per_minute: int = field(
+        default_factory=lambda: _get_int("NVIDIA_NIM_REQUESTS_PER_MINUTE", 60)
+    )
+    rate_limit_window_seconds: float = field(
+        default_factory=lambda: _get_float(
+            "NVIDIA_NIM_RATE_LIMIT_WINDOW_SECONDS", 60.0
+        )
+    )
+    min_request_interval_seconds: float = field(
+        default_factory=lambda: _get_float(
+            "NVIDIA_NIM_MIN_REQUEST_INTERVAL_SECONDS", 1.05
+        )
+    )
+    rate_limit_max_wait_seconds: float = field(
+        default_factory=lambda: _get_float(
+            "NVIDIA_NIM_RATE_LIMIT_MAX_WAIT_SECONDS", 120.0
+        )
+    )
+    rate_limit_429_cooldown_seconds: float = field(
+        default_factory=lambda: _get_float(
+            "NVIDIA_NIM_429_COOLDOWN_SECONDS", 60.0
+        )
+    )
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.base_url and self.api_key and self.model)
+
+
+@dataclass(frozen=True)
+class MCPFilesystemConfig:
+    """Official filesystem MCP server and file-agent safety settings."""
+
+    enabled: bool = field(
+        default_factory=lambda: _get_bool("MCP_FILESYSTEM_ENABLED", True)
+    )
+    roots: tuple[Path, ...] = field(
+        default_factory=lambda: _get_path_list(
+            "MCP_FILESYSTEM_ROOTS", (PROJECT_ROOT,)
+        )
+    )
+    package: str = field(
+        default_factory=lambda: os.getenv(
+            "MCP_FILESYSTEM_PACKAGE", "@modelcontextprotocol/server-filesystem"
+        ).strip()
+    )
+    allow_mutations: bool = field(
+        default_factory=lambda: _get_bool("MCP_FILESYSTEM_ALLOW_MUTATIONS", False)
+    )
+    max_tool_rounds: int = field(
+        default_factory=lambda: _get_int("MCP_FILESYSTEM_MAX_TOOL_ROUNDS", 8)
+    )
+    max_result_chars: int = field(
+        default_factory=lambda: _get_int("MCP_FILESYSTEM_MAX_RESULT_CHARS", 30000)
+    )
+    operation_timeout_seconds: int = field(
+        default_factory=lambda: _get_int(
+            "MCP_FILESYSTEM_OPERATION_TIMEOUT_SECONDS", 90
+        )
+    )
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.enabled and self.package and self.roots)
 
 
 @dataclass(frozen=True)
@@ -185,6 +315,9 @@ class MetadataConfig:
             os.getenv("AI_ANALYST_METADATA_DIR", "metadata_store")
         )
     )
+    llm_enrich_batch_size: int = field(
+        default_factory=lambda: _get_int("METADATA_LLM_ENRICH_BATCH_SIZE", 12)
+    )
 
     @property
     def schema_file(self) -> Path:
@@ -193,6 +326,16 @@ class MetadataConfig:
     @property
     def business_context_file(self) -> Path:
         return self.directory / "business_context.json"
+
+    def database_directory(self, db_identity: str) -> Path:
+        """Isolated metadata directory for a non-default connected database."""
+        return self.directory / "databases" / db_identity
+
+    def schema_file_for(self, db_identity: str) -> Path:
+        return self.database_directory(db_identity) / "schema_metadata.json"
+
+    def business_context_file_for(self, db_identity: str) -> Path:
+        return self.database_directory(db_identity) / "business_context.json"
 
 
 @dataclass(frozen=True)
@@ -231,6 +374,26 @@ class LoggingConfig:
     file: Path = field(
         default_factory=lambda: _resolve_path(os.getenv("LOG_FILE", "logs/ai_analyst.log"))
     )
+    max_bytes: int = field(
+        default_factory=lambda: _get_int("LOG_MAX_BYTES", 5_000_000)
+    )
+    backup_count: int = field(
+        default_factory=lambda: _get_int("LOG_BACKUP_COUNT", 5)
+    )
+    trace_file: Path = field(
+        default_factory=lambda: _resolve_path(
+            os.getenv("AGENT_TRACE_FILE", "logs/agent_traces.jsonl")
+        )
+    )
+    trace_max_bytes: int = field(
+        default_factory=lambda: _get_int("AGENT_TRACE_MAX_BYTES", 10_000_000)
+    )
+    trace_backup_count: int = field(
+        default_factory=lambda: _get_int("AGENT_TRACE_BACKUP_COUNT", 5)
+    )
+    trace_memory_events: int = field(
+        default_factory=lambda: _get_int("AGENT_TRACE_MEMORY_EVENTS", 1000)
+    )
 
 
 @dataclass(frozen=True)
@@ -245,6 +408,8 @@ class Settings:
     azure_ai: AzureAIConfig = field(default_factory=AzureAIConfig)
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     openrouter: OpenRouterConfig = field(default_factory=OpenRouterConfig)
+    nvidia_nim: NvidiaNIMConfig = field(default_factory=NvidiaNIMConfig)
+    mcp_filesystem: MCPFilesystemConfig = field(default_factory=MCPFilesystemConfig)
     default_llm_provider: str = field(
         default_factory=lambda: os.getenv("LLM_DEFAULT_PROVIDER", "azure_foundry")
     )

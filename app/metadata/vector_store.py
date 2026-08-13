@@ -1,12 +1,12 @@
-"""Local, versioned vector knowledge base for schema metadata (RAG retrieval).
+"""Versioned schema documentation with optional local vector retrieval.
 
 Rather than only scoring tables by keyword overlap (see
 :mod:`app.metadata.retrieval`'s lexical path), each table's business-enriched
 metadata -- the same description/columns/sample-values content the LLM
 enrichment step in :mod:`app.metadata.store` produces -- is rendered to a
-short text document and embedded into a local, on-disk Chroma collection. A
-question is answered by embedding it and doing a nearest-neighbor search
-over those documents, which generalizes to paraphrased/semantic questions
+short text document and always saved as a readable local knowledge base. When
+enabled, the same content is embedded into an on-disk Chroma collection. A
+question can then use nearest-neighbor search, which generalizes to paraphrased/semantic questions
 that share no literal keywords with the schema (e.g. "top sellers" matching
 a table described as "product sales facts") -- something the keyword scorer
 alone cannot do.
@@ -24,12 +24,12 @@ version and keeps every prior version's Chroma collection and on-disk text
 export untouched, so nothing is ever silently overwritten or lost. Retrieval
 (:func:`query_relevant_tables`) always searches the latest version.
 
-**Text export.** Alongside each version's Chroma collection, the exact same
-per-table documents are written as plain ``.txt`` files under
+**Documents are primary.** Every version's per-table documents are written as
+plain ``.txt`` files under
 ``<vector store dir>/knowledge_base_txt/<db identity>/v<N>/`` (one file per
 table, plus a combined ``_all_tables.txt``) so a user can inspect -- or diff
-across versions -- exactly what the knowledge base knows, without a Chroma
-client.
+across versions -- exactly what the knowledge base knows. These files also
+power lexical Q&A when Chroma is disabled or unhealthy.
 
 Every function here degrades to returning ``None``/empty on any backend
 failure (collection not yet built, corrupt store, import error) rather than
@@ -100,18 +100,27 @@ def _table_document(
 ) -> str:
     """Render one table's full business-enriched metadata as embeddable text."""
     pk = ", ".join(table.get("primary_key", [])) or "none"
+    count_prefix = ">=" if table.get("row_count_is_lower_bound") else "~"
     lines = [
-        f"Table {table_name} ({table.get('kind', 'unknown')}, "
-        f"~{table.get('row_count', 0)} rows, primary key: {pk})",
+        f"Table {table_name} ({table.get('object_type', 'table')}, "
+        f"{table.get('kind', 'unknown')}, {count_prefix}{table.get('row_count', 0)} "
+        f"rows, primary key: {pk})",
         table.get("description") or "",
     ]
+    if table.get("depends_on"):
+        lines.append("Derived from: " + ", ".join(table["depends_on"]))
     for col_name, col in table.get("columns", {}).items():
         bits = [b for b in (col.get("sql_type"), col.get("semantic_role")) if b]
         if col.get("is_foreign_key") and col.get("references"):
             ref = col["references"]
-            bits.append(f"references {ref['table']}.{ref['column']}")
+            source = col.get("relationship_source") or "declared"
+            bits.append(f"{source} reference to {ref['table']}.{ref['column']}")
         if col.get("sample_values"):
             bits.append("examples: " + ", ".join(str(v) for v in col["sample_values"][:6]))
+        if col.get("observed_value_family") not in {None, "empty"}:
+            bits.append(f"observed family: {col['observed_value_family']}")
+        if col.get("sampled_null_fraction") is not None:
+            bits.append(f"sample nulls: {float(col['sampled_null_fraction']):.1%}")
         descriptor = f" ({', '.join(bits)})" if bits else ""
         lines.append(f"{col_name}{descriptor}: {col.get('description') or ''}")
 
@@ -124,9 +133,23 @@ def _table_document(
         lines.append("")
         lines.append("Relationships:")
         for rel in relationships:
+            source = rel.get("source", "declared")
+            confidence = rel.get("confidence")
+            confidence_text = (
+                f", confidence {float(confidence):.0%}"
+                if confidence is not None
+                else ""
+            )
+            composite_text = (
+                f", composite key part {int(rel.get('constraint_sequence', 0)) + 1}"
+                f"/{int(rel['constraint_size'])}"
+                if int(rel.get("constraint_size") or 1) > 1
+                else ""
+            )
             lines.append(
                 f"- {rel['from_table']}.{rel['from_column']} -> "
-                f"{rel['to_table']}.{rel['to_column']}"
+                f"{rel['to_table']}.{rel['to_column']} "
+                f"({source}{confidence_text}{composite_text})"
             )
 
     rules = metadata.get("aggregation_rules", {}).get(table_name, {})
@@ -153,6 +176,20 @@ def _table_document(
         for term, definition in relevant_glossary.items():
             lines.append(f"- {term}: {definition}")
     return "\n".join(lines)
+
+
+def render_documents(metadata: dict[str, Any]) -> dict[str, str]:
+    """Render the complete, human-readable document set for ``metadata``.
+
+    Document generation is intentionally independent from vector indexing.
+    A usable knowledge base therefore still exists when Chroma is disabled or
+    temporarily unavailable; semantic indexing is only an optional accelerator.
+    """
+    tables = metadata.get("tables", {})
+    return {
+        name: _table_document(name, tables[name], metadata)
+        for name in sorted(tables)
+    }
 
 
 def _clean_error(exc: BaseException) -> str:
@@ -212,14 +249,28 @@ def _txt_dir(db_identity: str, version: int) -> Path:
     return _vector_directory() / "knowledge_base_txt" / db_identity / f"v{version}"
 
 
+def knowledge_document_files(
+    db_identity: str, version: int, documents: dict[str, str]
+) -> dict[Path, str]:
+    """Return the exact managed file set for a knowledge-base version."""
+    directory = _txt_dir(db_identity, version)
+    files = {
+        directory / f"{_safe_filename(table_name)}.txt": text
+        for table_name, text in sorted(documents.items())
+    }
+    combined = [
+        f"{'=' * 70}\n{table_name}\n{'=' * 70}\n{text}\n"
+        for table_name, text in sorted(documents.items())
+    ]
+    files[directory / "_all_tables.txt"] = "\n".join(combined)
+    return files
+
+
 def _write_txt_documents(db_identity: str, version: int, documents: dict[str, str]) -> None:
     directory = _txt_dir(db_identity, version)
     directory.mkdir(parents=True, exist_ok=True)
-    combined: list[str] = []
-    for table_name, text in sorted(documents.items()):
-        (directory / f"{_safe_filename(table_name)}.txt").write_text(text, encoding="utf-8")
-        combined.append(f"{'=' * 70}\n{table_name}\n{'=' * 70}\n{text}\n")
-    (directory / "_all_tables.txt").write_text("\n".join(combined), encoding="utf-8")
+    for path, text in knowledge_document_files(db_identity, version, documents).items():
+        path.write_text(text, encoding="utf-8")
 
 
 def read_version_documents(db_identity: str, version: int) -> dict[str, str]:
@@ -240,23 +291,20 @@ def read_version_documents(db_identity: str, version: int) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def sync_collection(metadata: dict[str, Any], *, db_identity: str) -> dict[str, Any] | None:
-    """Bring the vector knowledge base for one database up to date.
+def sync_collection(
+    metadata: dict[str, Any],
+    *,
+    db_identity: str,
+    documents: dict[str, str] | None = None,
+) -> dict[str, Any] | None:
+    """Save knowledge documents and optionally synchronize their vector index.
 
-    Mints a new version when the schema's structural hash differs from the
-    latest known version (or none exists yet); otherwise refreshes the
-    current version's documents in place (e.g. an unchanged-schema "Refresh
-    schema" click just re-embeds, it doesn't fork a new version). Either way
-    the same documents are written to the on-disk ``.txt`` export.
-
-    Returns the version record that's now current, or ``None`` if there was
-    nothing to index or the vector backend failed (logged, never raised).
+    Text documents are the source of truth and are always versioned/written.
+    Chroma is an optional semantic-search layer. If it is disabled, callers can
+    immediately use lexical document search; if it fails, the failure is
+    reported while the generated documentation remains readable.
     """
     from app.config import get_settings
-
-    if not get_settings().vector.enabled:
-        _last_errors.pop(db_identity, None)
-        return None
 
     tables = metadata.get("tables", {})
     if not tables:
@@ -264,39 +312,55 @@ def sync_collection(metadata: dict[str, Any], *, db_identity: str) -> dict[str, 
         return None
 
     schema_hash = metadata.get("schema_hash", "")
-    documents = {name: _table_document(name, tables[name], metadata) for name in tables}
+    documents = documents or render_documents(metadata)
     metadatas = [{"table": name, "kind": tables[name].get("kind", "unknown")} for name in documents]
 
     latest = _latest_version(db_identity)
     reuse_current_version = latest is not None and latest.get("schema_hash") == schema_hash
+
+    if reuse_current_version:
+        version_record = latest
+    else:
+        versions = _load_versions(db_identity)
+        next_version = (latest["version"] + 1) if latest else 1
+        collection_name = _collection_name(db_identity, next_version)
+        version_record = {
+            "version": next_version,
+            "schema_hash": schema_hash,
+            "created_at": _now_iso(),
+            "tables": sorted(documents),
+            "collection": collection_name,
+        }
+        versions.append(version_record)
+        _save_versions(db_identity, versions)
+
+    # Keep the plain-text knowledge base available regardless of vector
+    # configuration/backend health.
+    _write_txt_documents(db_identity, version_record["version"], documents)
+
+    if not get_settings().vector.enabled:
+        _last_errors.pop(db_identity, None)
+        logger.info(
+            "Knowledge documents saved: %d table(s), db %s, version %d (vector disabled)",
+            len(documents),
+            db_identity,
+            version_record["version"],
+        )
+        return version_record
 
     try:
         client = _get_client()
         if reuse_current_version:
             collection = client.get_or_create_collection(latest["collection"])
             collection.upsert(ids=list(documents), documents=list(documents.values()), metadatas=metadatas)
-            version_record = latest
         else:
-            versions = _load_versions(db_identity)
-            next_version = (latest["version"] + 1) if latest else 1
-            collection_name = _collection_name(db_identity, next_version)
-            collection = client.get_or_create_collection(collection_name)
+            collection = client.get_or_create_collection(version_record["collection"])
             collection.upsert(ids=list(documents), documents=list(documents.values()), metadatas=metadatas)
-            version_record = {
-                "version": next_version,
-                "schema_hash": schema_hash,
-                "created_at": _now_iso(),
-                "tables": sorted(documents),
-                "collection": collection_name,
-            }
-            versions.append(version_record)
-            _save_versions(db_identity, versions)
     except Exception as exc:  # noqa: BLE001 - indexing must never break a schema refresh
         _last_errors[db_identity] = _clean_error(exc)
         logger.exception("Vector store sync failed for db %s", db_identity)
         return None
 
-    _write_txt_documents(db_identity, version_record["version"], documents)
     _last_errors.pop(db_identity, None)
     logger.info(
         "Knowledge base synced: %d table(s), db %s, version %d%s",
@@ -306,6 +370,68 @@ def sync_collection(metadata: dict[str, Any], *, db_identity: str) -> dict[str, 
         " (new version)" if not reuse_current_version else "",
     )
     return version_record
+
+
+def _document_tokens(text: str) -> set[str]:
+    import re
+
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+    return {
+        token.casefold()
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_]+", text)
+        if len(token) > 1
+    }
+
+
+def query_documents_with_fallback(
+    question: str,
+    *,
+    db_identity: str,
+    top_k: int,
+    fallback_documents: dict[str, str] | None = None,
+) -> tuple[list[RetrievedDocument], str]:
+    """Search documents semantically, then fall back to local lexical ranking."""
+    semantic = query_relevant_documents(
+        question,
+        db_identity=db_identity,
+        top_k=top_k,
+    )
+    if semantic:
+        return semantic, "vector"
+
+    latest = _latest_version(db_identity)
+    documents = (
+        read_version_documents(db_identity, int(latest["version"]))
+        if latest is not None
+        else dict(fallback_documents or {})
+    )
+    if not documents and fallback_documents:
+        documents = dict(fallback_documents)
+    if not documents:
+        return [], "lexical"
+
+    query_tokens = _document_tokens(question)
+    ranked: list[tuple[int, str, str]] = []
+    for table_name, content in documents.items():
+        table_tokens = _document_tokens(table_name)
+        content_tokens = _document_tokens(content)
+        score = 4 * len(query_tokens & table_tokens) + len(query_tokens & content_tokens)
+        ranked.append((score, table_name, content))
+    ranked.sort(key=lambda item: (-item[0], item[1].casefold()))
+    selected = ranked[: min(max(1, top_k), len(ranked))]
+    return (
+        [
+            RetrievedDocument(
+                table_name=table_name,
+                content=content,
+                # Distance is informational in the UI. Lower remains better.
+                distance=1.0 / (1.0 + max(0, score)),
+                version=int(latest["version"]) if latest is not None else 0,
+            )
+            for score, table_name, content in selected
+        ],
+        "lexical",
+    )
 
 
 def query_relevant_documents(
@@ -390,8 +516,6 @@ def collection_stats(db_identity: str) -> dict[str, Any]:
         "error": None,
         "text_export_path": None,
     }
-    if not settings.vector.enabled:
-        return base
     if not versions:
         if db_identity in _last_errors:
             base.update(status="error", error=_last_errors[db_identity])
@@ -399,12 +523,17 @@ def collection_stats(db_identity: str) -> dict[str, Any]:
 
     latest = versions[-1]
     version = latest["version"]
+    text_documents = read_version_documents(db_identity, version)
     base.update(
         table_count=len(latest.get("tables", [])),
+        document_count=len(text_documents),
         version=version,
         created_at=latest.get("created_at"),
         text_export_path=str(_txt_dir(db_identity, version)),
     )
+    if not settings.vector.enabled:
+        base.update(status="documents_ready" if text_documents else "not_built")
+        return base
     if db_identity in _last_errors:
         base.update(status="error", error=_last_errors[db_identity])
         return base

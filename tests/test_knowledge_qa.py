@@ -69,6 +69,10 @@ def test_knowledge_question_is_grounded_in_retrieved_documents(monkeypatch):
     assert len(llm.text_calls) == 1
     assert "Use only the supplied sources" in llm.text_calls[0]["system_prompt"]
     assert "SalesAmount: Net revenue" in llm.text_calls[0]["user_prompt"]
+    assert response.retrieval_mode == "vector"
+    assert [record.name for record in response.tool_records] == [
+        "search_knowledge_documents"
+    ]
 
 
 def test_repeat_knowledge_question_uses_versioned_cache(monkeypatch):
@@ -114,4 +118,3 @@ def test_empty_knowledge_question_is_rejected_before_retrieval():
 
     assert response.status == "error"
     assert response.error_title == "Enter a knowledge-base question"
-

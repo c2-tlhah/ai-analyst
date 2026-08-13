@@ -104,7 +104,7 @@ def test_time_grouping_rejects_non_date_column():
     assert result.ok is False
     assert "not a date column" in result.error
     assert result.error_title == "Time grouping is not applicable"
-    assert any("OrderDate" in suggestion for suggestion in result.suggestions)
+    assert any("date field" in suggestion for suggestion in result.suggestions)
 
 
 def test_inapplicable_scatter_explains_required_data_and_alternatives():

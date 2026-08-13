@@ -10,10 +10,13 @@ ONNX model download the first time it runs in a given environment.
 
 from __future__ import annotations
 
+import dataclasses
+
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from app.metadata import vector_store
+from app import config as config_module
 
 
 def _fresh_client(tmp_path):
@@ -209,3 +212,30 @@ def test_failed_build_reports_the_backend_reason(tmp_path, monkeypatch):
     assert stats["indexed"] is False
     assert "ModuleNotFoundError" in stats["error"]
     assert "chromadb" in stats["error"]
+
+
+def test_plain_documents_work_when_vector_indexing_is_disabled(tmp_path, monkeypatch):
+    _patch(monkeypatch, tmp_path)
+    current = config_module.get_settings()
+    monkeypatch.setattr(
+        config_module,
+        "_settings",
+        dataclasses.replace(
+            current,
+            vector=dataclasses.replace(current.vector, enabled=False),
+        ),
+    )
+
+    version = vector_store.sync_collection(_metadata(), db_identity="docs_only")
+    assert version["version"] == 1
+
+    stats = vector_store.collection_stats("docs_only")
+    assert stats["indexed"] is False
+    assert stats["status"] == "documents_ready"
+    assert stats["document_count"] == 2
+
+    documents, mode = vector_store.query_documents_with_fallback(
+        "revenue SalesAmount", db_identity="docs_only", top_k=1
+    )
+    assert mode == "lexical"
+    assert documents[0].table_name == "FactInternetSales"

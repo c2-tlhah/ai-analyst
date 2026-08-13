@@ -10,8 +10,6 @@ only things that ever touch the database.
 
 from __future__ import annotations
 
-import re
-
 from app.llm.client import LLMClient
 from app.llm.schemas import SQLGenerationResult
 
@@ -27,84 +25,45 @@ Rules (all are hard requirements):
   fields; use SELECT * only for open-ended "show me the data" style questions.
 - Use the aggregation rules / default measures given in the metadata when the
   question is ambiguous about how to aggregate a measure.
-- Add a LIMIT clause for ranking/"top N" questions; for other questions the backend
-  will enforce a safety LIMIT automatically, so you do not need to add one yourself
-  unless the question implies a specific N.
+- Treat declared types and observed data families as facts. SUM/AVG and arithmetic
+  require numeric data; date functions require a temporal or date-like field. Never
+  cast arbitrary labels merely to make a query run.
+- Respect table grain and relationship cardinality. Never join two many-side/event
+  tables row-for-row when that can multiply measures. Aggregate each source to the
+  requested grain first, then combine compatible aggregates.
+- COUNT(*) counts rows, COUNT(column) excludes NULL, and COUNT(DISTINCT key) counts
+  entities. Choose deliberately from the wording and documented grain.
+- Do not silently replace NULL with zero, discard NULL categories, or deduplicate
+  rows unless the question requires that behavior.
+- Add a LIMIT clause for global ranking/"top N" questions. For top N per group
+  (for example, best product per month), calculate ROW_NUMBER, RANK, or DENSE_RANK
+  in a CTE with PARTITION BY the group and metric ordering inside OVER(...), then
+  filter that rank to = 1 or <= N in the outer query. Do not add a global LIMIT to
+  a per-group result. For other questions the backend enforces a safety LIMIT.
 - Use table aliases and qualify columns when joining more than one table.
+- Join tables only through relationships present in the metadata. Relationships may
+  be declared by SQLite or conservatively inferred from unique matching ID/key fields.
+- A view can overlap a base table. Never combine a view with a table that may feed it
+  unless the question explicitly requires both and the metadata proves the semantics.
+- Preserve exact identifier spelling. Double-quote an identifier when it contains
+  spaces, punctuation, or a SQLite keyword.
+- For temporal grouping use SQLite date functions such as date(...) or strftime(...)
+  against the exact temporal column supplied in metadata; never invent a calendar table.
+- When a RESOLVED TIME CONTEXT is supplied, it is authoritative: copy its literal
+  start and exclusive-end dates exactly, apply the same range to every relevant
+  event/fact source, and never derive separate MAX(date) years per table.
 - Use SQLite syntax only: never use TOP/TOP(...), :: casts, SQL Server brackets,
   or a trailing comma before FROM. Put LIMIT N at the very end of a ranking query.
-- A business concept such as "channel" does not imply that an IssueType, Channel,
-  or SalesChannel column exists. When channels are stored in separate fact tables,
-  combine their compatible rows with UNION ALL before aggregating. Do not add the
-  same fact table twice and do not invent a discriminator column.
+- A business concept does not imply that a similarly named discriminator column
+  exists. When comparable categories are stored in separate event tables, combine
+  only schema-compatible measures at the same grain. Do not add a table twice or
+  invent a discriminator column.
+- For rankings, order by the requested metric in the correct direction and apply the
+  exact requested N. For a singular GLOBAL row ranking use LIMIT 1; for a singular
+  PER-GROUP ranking filter the partitioned window rank to 1. If the question asks
+  only for the highest/lowest value (not its associated entity), use MAX/MIN instead
+  of manufacturing a row ranking.
 """
-
-
-_CROSS_CHANNEL_REQUIRED_METADATA = (
-    "TABLE DimProduct",
-    "TABLE FactInternetSales",
-    "TABLE FactResellerSales",
-    "ProductKey",
-    "ProductName",
-    "SalesAmount",
-)
-
-
-def _is_cross_channel_product_ranking(question: str, metadata_text: str) -> bool:
-    """Recognize the packaged schema's high-confidence cross-channel ranking intent."""
-    normalized = " ".join(question.lower().split())
-    has_rank = bool(re.search(r"\btop\s+\d+\b", normalized))
-    has_product = bool(re.search(r"\bproducts?\b", normalized))
-    has_sales = bool(re.search(r"\b(sales|revenue|amount)\b", normalized))
-    has_channels = bool(
-        re.search(r"\b(both|all|across)\b", normalized)
-        and re.search(r"\bchannels?\b", normalized)
-    )
-    metadata_lower = metadata_text.lower()
-    has_schema = all(
-        name.lower() in metadata_lower for name in _CROSS_CHANNEL_REQUIRED_METADATA
-    )
-    return has_rank and has_product and has_sales and has_channels and has_schema
-
-
-def _cross_channel_product_ranking(question: str) -> SQLGenerationResult:
-    match = re.search(r"\btop\s+(\d+)\b", question, flags=re.IGNORECASE)
-    requested_limit = int(match.group(1)) if match else 10
-    # The executor still applies the configured global maximum after validation.
-    requested_limit = max(1, requested_limit)
-    sql = f"""WITH channel_sales AS (
-    SELECT ProductKey, SalesAmount FROM FactInternetSales
-    UNION ALL
-    SELECT ProductKey, SalesAmount FROM FactResellerSales
-)
-SELECT p.ProductName, SUM(s.SalesAmount) AS TotalSales
-FROM channel_sales AS s
-JOIN DimProduct AS p ON p.ProductKey = s.ProductKey
-GROUP BY p.ProductKey, p.ProductName
-ORDER BY TotalSales DESC
-LIMIT {requested_limit}"""
-    return SQLGenerationResult(
-        sql=sql,
-        explanation=(
-            "Combines internet and reseller sales without deduplicating transactions, "
-            "then totals sales by product and returns the highest-selling products."
-        ),
-        tables_used=["FactInternetSales", "FactResellerSales", "DimProduct"],
-    )
-
-
-def _schema_specific_guidance(question: str, metadata_text: str) -> str:
-    if not _is_cross_channel_product_ranking(question, metadata_text):
-        return ""
-    return """
-
-SCHEMA-SPECIFIC GUIDANCE:
-For sales across both channels in this metadata, UNION ALL ProductKey and
-SalesAmount from FactInternetSales and FactResellerSales in a CTE. Join that CTE
-to DimProduct on ProductKey, group by DimProduct.ProductKey and ProductName, sum
-SalesAmount once, order descending, and finish with LIMIT N. There is no IssueType
-column and SQLite has no TOP syntax.
-""".strip()
 
 
 def _user_prompt(
@@ -115,9 +74,6 @@ def _user_prompt(
     conversation_history_text: str | None,
 ) -> str:
     parts = [f"METADATA CONTEXT:\n{metadata_text}"]
-    guidance = _schema_specific_guidance(question, metadata_text)
-    if guidance:
-        parts.append(f"\n{guidance}")
     if conversation_history_text:
         parts.append(
             f"\n{conversation_history_text}\n"
@@ -130,7 +86,9 @@ def _user_prompt(
             "\nA previous attempt at this question failed validation/execution. "
             f"Previous SQL:\n{prior_sql}\n\nError:\n{prior_error}\n\n"
             "Rebuild the query from scratch as SQLite. Use only exact metadata names, "
-            "LIMIT instead of TOP, no :: syntax, and no comma immediately before FROM."
+            "LIMIT instead of TOP, no :: syntax, and no comma immediately before FROM. "
+            "Address every reported semantic issue directly; do not evade type, join, "
+            "time, grouping, or ranking checks with arbitrary casts or unused clauses."
         )
     return "\n".join(parts)
 
@@ -144,12 +102,6 @@ def generate_sql(
     prior_error: str | None = None,
     conversation_history_text: str | None = None,
 ) -> SQLGenerationResult:
-    # This intent has one unambiguous implementation in the packaged schema. A
-    # deterministic template avoids slow, repeated dialect mistakes from small
-    # local models while the normal validator/executor safety gates still apply.
-    if _is_cross_channel_product_ranking(question, metadata_text):
-        return _cross_channel_product_ranking(question)
-
     return llm_client.complete_json(
         system_prompt=_SYSTEM_PROMPT,
         user_prompt=_user_prompt(

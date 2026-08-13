@@ -39,32 +39,50 @@
       }
     }
   },
-  "generated_at": "2026-08-12T11:14:31.310197+00:00",
+  "database_identity": "99e99003205abcf7",
+  "database_path": "C:\\Users\\tlha\\Desktop\\ai-analyst\\data\\ai_analyst.db",
+  "generated_at": "2026-08-13T11:44:28.138389+00:00",
   "glossary": {
     "customer": "Consumer customers only exist as CustomerKey on FactInternetSales; no customer dimension is loaded in this deployment.",
     "profit": "Approximated as SalesAmount - TotalProductCost (no explicit profit column is stored).",
     "revenue": "SalesAmount in FactInternetSales / FactResellerSales.",
     "sales channel": "'Internet' = FactInternetSales (direct consumer), 'Reseller' = FactResellerSales (B2B/dealer)."
   },
+  "metadata_format_version": 5,
   "relationships": [
     {
+      "confidence": 1.0,
+      "constraint_id": 0,
+      "constraint_sequence": 0,
+      "constraint_size": 1,
       "from_column": "ProductKey",
       "from_table": "FactInternetSales",
+      "source": "declared",
       "to_column": "ProductKey",
       "to_table": "DimProduct"
     },
     {
+      "confidence": 1.0,
+      "constraint_id": 0,
+      "constraint_sequence": 0,
+      "constraint_size": 1,
       "from_column": "ProductKey",
       "from_table": "FactResellerSales",
+      "source": "declared",
       "to_column": "ProductKey",
       "to_table": "DimProduct"
     }
   ],
-  "schema_hash": "677292594dfe684e0890979c6075b5c0df9f16b8d25305e625c9eb8387d148f2",
+  "schema_hash": "61df6999ab4c3af8204fd00bbffb873e23cab52b1ccd03c1c3363b64f3d492da",
+  "source_fingerprint": {
+    "database_mtime_ns": 1786437518000000000,
+    "database_size": 24743936
+  },
   "tables": {
     "DimProduct": {
       "columns": {
         "Class": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Quality tier classification of the product (e.g. L=Low, M=Medium, H=High).",
           "distinct_count": 3,
@@ -72,16 +90,27 @@
           "is_primary_key": false,
           "name": "Class",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [
             "L ",
             "M ",
             "H "
           ],
+          "sampled_non_null_count": 330,
+          "sampled_null_fraction": 0.455446,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "Color": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Product color.",
           "distinct_count": 9,
@@ -89,7 +118,15 @@
           "is_primary_key": false,
           "name": "Color",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [
             "Black",
             "Silver",
@@ -101,10 +138,13 @@
             "Grey",
             "Silver/Black"
           ],
+          "sampled_non_null_count": 352,
+          "sampled_null_fraction": 0.419142,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "DaysToManufacture": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Lead time in days required to manufacture one unit.",
           "distinct_count": null,
@@ -112,12 +152,23 @@
           "is_primary_key": false,
           "name": "DaysToManufacture",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 606,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "numeric_attribute",
           "sql_type": "INTEGER"
         },
         "DealerPrice": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Wholesale price offered to dealers/resellers.",
           "distinct_count": null,
@@ -125,12 +176,23 @@
           "is_primary_key": false,
           "name": "DealerPrice",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 395,
+          "sampled_null_fraction": 0.348185,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "EndDate": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Date this product record stopped being effective (NULL if still active).",
           "distinct_count": null,
@@ -138,25 +200,50 @@
           "is_primary_key": false,
           "name": "EndDate",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "temporal_text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 200,
+          "sampled_null_fraction": 0.669967,
           "semantic_role": "temporal",
           "sql_type": "TEXT"
         },
         "FinishedGoodsFlag": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "1 if the product is a sellable finished good, 0 if it is a component.",
-          "distinct_count": null,
+          "distinct_count": 2,
           "is_foreign_key": false,
           "is_primary_key": false,
           "name": "FinishedGoodsFlag",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
-          "sample_values": [],
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
+          "sample_values": [
+            "0",
+            "1"
+          ],
+          "sampled_non_null_count": 606,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "flag",
           "sql_type": "INTEGER"
         },
         "ListPrice": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Manufacturer's suggested retail list price per unit.",
           "distinct_count": null,
@@ -164,12 +251,23 @@
           "is_primary_key": false,
           "name": "ListPrice",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 395,
+          "sampled_null_fraction": 0.348185,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "ModelName": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Product model family name; groups size/color variants of the same model.",
           "distinct_count": 119,
@@ -177,12 +275,23 @@
           "is_primary_key": false,
           "name": "ModelName",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 397,
+          "sampled_null_fraction": 0.344884,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "ProductAlternateKey": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Natural business product code (SKU) from the source system.",
           "distinct_count": null,
@@ -190,12 +299,23 @@
           "is_primary_key": false,
           "name": "ProductAlternateKey",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 606,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "TEXT"
         },
         "ProductDescription": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Marketing description of the product.",
           "distinct_count": 114,
@@ -203,12 +323,23 @@
           "is_primary_key": false,
           "name": "ProductDescription",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 396,
+          "sampled_null_fraction": 0.346535,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "ProductKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Surrogate primary key uniquely identifying a product.",
           "distinct_count": null,
@@ -216,12 +347,23 @@
           "is_primary_key": true,
           "name": "ProductKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 606,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ProductLine": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "High-level product line code (e.g. R=Road, M=Mountain, T=Touring, S=Standard).",
           "distinct_count": 4,
@@ -229,17 +371,28 @@
           "is_primary_key": false,
           "name": "ProductLine",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [
             "R ",
             "S ",
             "M ",
             "T "
           ],
+          "sampled_non_null_count": 380,
+          "sampled_null_fraction": 0.372937,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "ProductName": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Customer-facing product name.",
           "distinct_count": 504,
@@ -247,12 +400,23 @@
           "is_primary_key": false,
           "name": "ProductName",
           "nullable": false,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 606,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "ProductSubcategoryKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Key of the product subcategory this product belongs to (grouping key).",
           "distinct_count": null,
@@ -260,12 +424,23 @@
           "is_primary_key": false,
           "name": "ProductSubcategoryKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 397,
+          "sampled_null_fraction": 0.344884,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ReorderPoint": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Inventory level at which the product should be reordered.",
           "distinct_count": null,
@@ -273,12 +448,23 @@
           "is_primary_key": false,
           "name": "ReorderPoint",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 606,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "numeric_attribute",
           "sql_type": "INTEGER"
         },
         "SafetyStockLevel": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Inventory planning safety-stock threshold.",
           "distinct_count": null,
@@ -286,12 +472,23 @@
           "is_primary_key": false,
           "name": "SafetyStockLevel",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 606,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "numeric_attribute",
           "sql_type": "INTEGER"
         },
         "Size": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Product size label.",
           "distinct_count": 18,
@@ -299,7 +496,15 @@
           "is_primary_key": false,
           "name": "Size",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [
             "58",
             "M",
@@ -314,10 +519,13 @@
             "60",
             "42"
           ],
+          "sampled_non_null_count": 299,
+          "sampled_null_fraction": 0.506601,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "SizeRange": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Product size range/category.",
           "distinct_count": 10,
@@ -325,7 +533,15 @@
           "is_primary_key": false,
           "name": "SizeRange",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [
             "54-58 CM",
             "M",
@@ -338,10 +554,13 @@
             "38-40 CM",
             "70"
           ],
+          "sampled_non_null_count": 299,
+          "sampled_null_fraction": 0.506601,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "StandardCost": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Standard (budgeted) manufacturing cost per unit.",
           "distinct_count": null,
@@ -349,12 +568,23 @@
           "is_primary_key": false,
           "name": "StandardCost",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 395,
+          "sampled_null_fraction": 0.348185,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "StartDate": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Date this product record became effective.",
           "distinct_count": null,
@@ -362,25 +592,49 @@
           "is_primary_key": false,
           "name": "StartDate",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "temporal_text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 606,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "temporal",
           "sql_type": "TEXT"
         },
         "Status": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Current lifecycle status of the product (e.g. Current, Discontinued).",
-          "distinct_count": null,
+          "distinct_count": 1,
           "is_foreign_key": false,
           "is_primary_key": false,
           "name": "Status",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
-          "sample_values": [],
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
+          "sample_values": [
+            "Current"
+          ],
+          "sampled_non_null_count": 406,
+          "sampled_null_fraction": 0.330033,
           "semantic_role": "flag",
           "sql_type": "TEXT"
         },
         "Style": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Target fit/style of the product (e.g. U=Unisex, M=Men's, W=Women's).",
           "distinct_count": 3,
@@ -388,16 +642,27 @@
           "is_primary_key": false,
           "name": "Style",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [
             "U ",
             "W ",
             "M "
           ],
+          "sampled_non_null_count": 301,
+          "sampled_null_fraction": 0.5033,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "Weight": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Product weight.",
           "distinct_count": null,
@@ -405,35 +670,58 @@
           "is_primary_key": false,
           "name": "Weight",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 282,
+          "sampled_null_fraction": 0.534653,
           "semantic_role": "numeric_attribute",
           "sql_type": "REAL"
         }
       },
+      "depends_on": [],
       "description": "Product dimension. One row per product sold by AdventureWorks, including pricing, cost, physical attributes and lifecycle status.",
       "kind": "dimension",
+      "object_type": "table",
       "primary_key": [
         "ProductKey"
       ],
-      "row_count": 606
+      "row_count": 606,
+      "row_count_is_lower_bound": false
     },
     "FactInternetSales": {
       "columns": {
         "CarrierTrackingNumber": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Shipping carrier tracking number.",
-          "distinct_count": 0,
+          "distinct_count": null,
           "is_foreign_key": false,
           "is_primary_key": false,
           "name": "CarrierTrackingNumber",
           "nullable": true,
+          "observed_storage_types": [],
+          "observed_value_family": "empty",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 0,
+          "sampled_null_fraction": 1.0,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "CurrencyKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the transaction currency.",
           "distinct_count": null,
@@ -441,12 +729,23 @@
           "is_primary_key": false,
           "name": "CurrencyKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "CustomerKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the purchasing consumer customer.",
           "distinct_count": null,
@@ -454,25 +753,45 @@
           "is_primary_key": false,
           "name": "CustomerKey",
           "nullable": false,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "CustomerPONumber": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Customer purchase-order reference number.",
-          "distinct_count": 0,
+          "distinct_count": null,
           "is_foreign_key": false,
           "is_primary_key": false,
           "name": "CustomerPONumber",
           "nullable": true,
+          "observed_storage_types": [],
+          "observed_value_family": "empty",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 0,
+          "sampled_null_fraction": 1.0,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "DiscountAmount": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Discount amount applied to the line.",
           "distinct_count": null,
@@ -480,12 +799,23 @@
           "is_primary_key": false,
           "name": "DiscountAmount",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "DueDate": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Calendar date the order was due.",
           "distinct_count": null,
@@ -493,12 +823,23 @@
           "is_primary_key": false,
           "name": "DueDate",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "temporal_text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "temporal",
           "sql_type": "TEXT"
         },
         "DueDateKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Integer YYYYMMDD key for the due date.",
           "distinct_count": null,
@@ -506,12 +847,23 @@
           "is_primary_key": false,
           "name": "DueDateKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ExtendedAmount": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "UnitPrice * OrderQuantity before discount.",
           "distinct_count": null,
@@ -519,12 +871,23 @@
           "is_primary_key": false,
           "name": "ExtendedAmount",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "Freight": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Freight/shipping charge on the line.",
           "distinct_count": null,
@@ -532,12 +895,23 @@
           "is_primary_key": false,
           "name": "Freight",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "InternetSalesKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Surrogate primary key of the sales order line.",
           "distinct_count": null,
@@ -545,12 +919,23 @@
           "is_primary_key": true,
           "name": "InternetSalesKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "OrderDate": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Calendar date the order was placed.",
           "distinct_count": null,
@@ -558,12 +943,23 @@
           "is_primary_key": false,
           "name": "OrderDate",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "temporal_text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "temporal",
           "sql_type": "TEXT"
         },
         "OrderDateKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Integer YYYYMMDD key for the order date.",
           "distinct_count": null,
@@ -571,12 +967,23 @@
           "is_primary_key": false,
           "name": "OrderDateKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "OrderQuantity": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Number of units ordered on this line.",
           "distinct_count": null,
@@ -584,12 +991,23 @@
           "is_primary_key": false,
           "name": "OrderQuantity",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "INTEGER"
         },
         "ProductKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Product sold on this line (foreign key to DimProduct).",
           "distinct_count": null,
@@ -597,15 +1015,26 @@
           "is_primary_key": false,
           "name": "ProductKey",
           "nullable": false,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": {
             "column": "ProductKey",
             "table": "DimProduct"
           },
+          "relationship_constraint_id": 0,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": "declared",
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ProductStandardCost": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Standard cost per unit at time of sale.",
           "distinct_count": null,
@@ -613,12 +1042,23 @@
           "is_primary_key": false,
           "name": "ProductStandardCost",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "PromotionKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the promotion/discount campaign applied, if any.",
           "distinct_count": null,
@@ -626,12 +1066,23 @@
           "is_primary_key": false,
           "name": "PromotionKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "SalesAmount": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Net revenue recognized for this line. Primary revenue measure.",
           "distinct_count": null,
@@ -639,12 +1090,23 @@
           "is_primary_key": false,
           "name": "SalesAmount",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "SalesOrderLineNumber": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Line number within the order.",
           "distinct_count": null,
@@ -652,25 +1114,47 @@
           "is_primary_key": false,
           "name": "SalesOrderLineNumber",
           "nullable": false,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "numeric_attribute",
           "sql_type": "INTEGER"
         },
         "SalesOrderNumber": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Business order number.",
-          "distinct_count": 27659,
+          "distinct_count": null,
           "is_foreign_key": false,
           "is_primary_key": false,
           "name": "SalesOrderNumber",
           "nullable": false,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "SalesTerritoryKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the sales territory/region attributed to the order.",
           "distinct_count": null,
@@ -678,12 +1162,23 @@
           "is_primary_key": false,
           "name": "SalesTerritoryKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ShipDate": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Calendar date the order shipped.",
           "distinct_count": null,
@@ -691,12 +1186,23 @@
           "is_primary_key": false,
           "name": "ShipDate",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "temporal_text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "temporal",
           "sql_type": "TEXT"
         },
         "ShipDateKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Integer YYYYMMDD key for the ship date.",
           "distinct_count": null,
@@ -704,12 +1210,23 @@
           "is_primary_key": false,
           "name": "ShipDateKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "TaxAmt": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Tax charged on the line.",
           "distinct_count": null,
@@ -717,12 +1234,23 @@
           "is_primary_key": false,
           "name": "TaxAmt",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "TotalProductCost": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Total standard cost for the line (ProductStandardCost * OrderQuantity).",
           "distinct_count": null,
@@ -730,12 +1258,23 @@
           "is_primary_key": false,
           "name": "TotalProductCost",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "UnitPrice": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Price charged per unit.",
           "distinct_count": null,
@@ -743,12 +1282,23 @@
           "is_primary_key": false,
           "name": "UnitPrice",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "UnitPriceDiscountPct": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Discount percentage applied to the unit price.",
           "distinct_count": null,
@@ -756,35 +1306,60 @@
           "is_primary_key": false,
           "name": "UnitPriceDiscountPct",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         }
       },
+      "depends_on": [],
       "description": "Direct-to-consumer online ('Internet channel') sales order lines. Grain: one row per sales order line.",
       "kind": "fact",
+      "object_type": "table",
       "primary_key": [
         "InternetSalesKey"
       ],
-      "row_count": 60398
+      "row_count": 60398,
+      "row_count_is_lower_bound": false
     },
     "FactResellerSales": {
       "columns": {
         "CarrierTrackingNumber": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Shipping carrier tracking number.",
-          "distinct_count": 3796,
+          "distinct_count": null,
           "is_foreign_key": false,
           "is_primary_key": false,
           "name": "CarrierTrackingNumber",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "CurrencyKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the transaction currency.",
           "distinct_count": null,
@@ -792,25 +1367,47 @@
           "is_primary_key": false,
           "name": "CurrencyKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "CustomerPONumber": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Customer purchase-order reference number.",
-          "distinct_count": 3796,
+          "distinct_count": null,
           "is_foreign_key": false,
           "is_primary_key": false,
           "name": "CustomerPONumber",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "DiscountAmount": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Discount amount applied to the line.",
           "distinct_count": null,
@@ -818,12 +1415,23 @@
           "is_primary_key": false,
           "name": "DiscountAmount",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "DueDate": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Calendar date the order was due.",
           "distinct_count": null,
@@ -831,12 +1439,23 @@
           "is_primary_key": false,
           "name": "DueDate",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "temporal_text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "temporal",
           "sql_type": "TEXT"
         },
         "DueDateKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Integer YYYYMMDD key for the due date.",
           "distinct_count": null,
@@ -844,12 +1463,23 @@
           "is_primary_key": false,
           "name": "DueDateKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "EmployeeKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the AdventureWorks sales employee who owns the order.",
           "distinct_count": null,
@@ -857,12 +1487,23 @@
           "is_primary_key": false,
           "name": "EmployeeKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ExtendedAmount": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "UnitPrice * OrderQuantity before discount.",
           "distinct_count": null,
@@ -870,12 +1511,23 @@
           "is_primary_key": false,
           "name": "ExtendedAmount",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "Freight": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Freight/shipping charge on the line.",
           "distinct_count": null,
@@ -883,12 +1535,23 @@
           "is_primary_key": false,
           "name": "Freight",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "OrderDate": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Calendar date the order was placed.",
           "distinct_count": null,
@@ -896,12 +1559,23 @@
           "is_primary_key": false,
           "name": "OrderDate",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "temporal_text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "temporal",
           "sql_type": "TEXT"
         },
         "OrderDateKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Integer YYYYMMDD key for the order date.",
           "distinct_count": null,
@@ -909,12 +1583,23 @@
           "is_primary_key": false,
           "name": "OrderDateKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "OrderQuantity": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Number of units ordered on this line.",
           "distinct_count": null,
@@ -922,12 +1607,23 @@
           "is_primary_key": false,
           "name": "OrderQuantity",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "INTEGER"
         },
         "ProductKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Product sold on this line (foreign key to DimProduct).",
           "distinct_count": null,
@@ -935,15 +1631,26 @@
           "is_primary_key": false,
           "name": "ProductKey",
           "nullable": false,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": {
             "column": "ProductKey",
             "table": "DimProduct"
           },
+          "relationship_constraint_id": 0,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": "declared",
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ProductStandardCost": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Standard cost per unit at time of sale.",
           "distinct_count": null,
@@ -951,12 +1658,23 @@
           "is_primary_key": false,
           "name": "ProductStandardCost",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "PromotionKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the promotion/discount campaign applied, if any.",
           "distinct_count": null,
@@ -964,12 +1682,23 @@
           "is_primary_key": false,
           "name": "PromotionKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ResellerKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the reseller/dealer that purchased the product.",
           "distinct_count": null,
@@ -977,12 +1706,23 @@
           "is_primary_key": false,
           "name": "ResellerKey",
           "nullable": false,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ResellerSalesKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Surrogate primary key of the sales order line.",
           "distinct_count": null,
@@ -990,12 +1730,23 @@
           "is_primary_key": true,
           "name": "ResellerSalesKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "SalesAmount": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Net revenue recognized for this line. Primary revenue measure.",
           "distinct_count": null,
@@ -1003,12 +1754,23 @@
           "is_primary_key": false,
           "name": "SalesAmount",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "SalesOrderLineNumber": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Line number within the order.",
           "distinct_count": null,
@@ -1016,25 +1778,47 @@
           "is_primary_key": false,
           "name": "SalesOrderLineNumber",
           "nullable": false,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "numeric_attribute",
           "sql_type": "INTEGER"
         },
         "SalesOrderNumber": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Business order number.",
-          "distinct_count": 3796,
+          "distinct_count": null,
           "is_foreign_key": false,
           "is_primary_key": false,
           "name": "SalesOrderNumber",
           "nullable": false,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "categorical_attribute",
           "sql_type": "TEXT"
         },
         "SalesTerritoryKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Identifier of the sales territory/region attributed to the order.",
           "distinct_count": null,
@@ -1042,12 +1826,23 @@
           "is_primary_key": false,
           "name": "SalesTerritoryKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "ShipDate": {
+          "declared_type_family": "text",
           "default_aggregation": null,
           "description": "Calendar date the order shipped.",
           "distinct_count": null,
@@ -1055,12 +1850,23 @@
           "is_primary_key": false,
           "name": "ShipDate",
           "nullable": true,
+          "observed_storage_types": [
+            "text"
+          ],
+          "observed_value_family": "temporal_text",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "temporal",
           "sql_type": "TEXT"
         },
         "ShipDateKey": {
+          "declared_type_family": "numeric",
           "default_aggregation": null,
           "description": "Integer YYYYMMDD key for the ship date.",
           "distinct_count": null,
@@ -1068,12 +1874,23 @@
           "is_primary_key": false,
           "name": "ShipDateKey",
           "nullable": true,
+          "observed_storage_types": [
+            "integer"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "key",
           "sql_type": "INTEGER"
         },
         "TaxAmt": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Tax charged on the line.",
           "distinct_count": null,
@@ -1081,12 +1898,23 @@
           "is_primary_key": false,
           "name": "TaxAmt",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "TotalProductCost": {
+          "declared_type_family": "numeric",
           "default_aggregation": "sum",
           "description": "Total standard cost for the line (ProductStandardCost * OrderQuantity).",
           "distinct_count": null,
@@ -1094,12 +1922,23 @@
           "is_primary_key": false,
           "name": "TotalProductCost",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "UnitPrice": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Price charged per unit.",
           "distinct_count": null,
@@ -1107,12 +1946,23 @@
           "is_primary_key": false,
           "name": "UnitPrice",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         },
         "UnitPriceDiscountPct": {
+          "declared_type_family": "numeric",
           "default_aggregation": "avg",
           "description": "Discount percentage applied to the unit price.",
           "distinct_count": null,
@@ -1120,18 +1970,31 @@
           "is_primary_key": false,
           "name": "UnitPriceDiscountPct",
           "nullable": true,
+          "observed_storage_types": [
+            "real"
+          ],
+          "observed_value_family": "numeric",
           "references": null,
+          "relationship_constraint_id": null,
+          "relationship_constraint_sequence": 0,
+          "relationship_constraint_size": 1,
+          "relationship_source": null,
           "sample_values": [],
+          "sampled_non_null_count": 2000,
+          "sampled_null_fraction": 0.0,
           "semantic_role": "measure",
           "sql_type": "REAL"
         }
       },
+      "depends_on": [],
       "description": "B2B sales order lines sold through reseller/dealer partners ('Reseller channel'). Grain: one row per sales order line.",
       "kind": "fact",
+      "object_type": "table",
       "primary_key": [
         "ResellerSalesKey"
       ],
-      "row_count": 60855
+      "row_count": 60855,
+      "row_count_is_lower_bound": false
     }
   }
 }

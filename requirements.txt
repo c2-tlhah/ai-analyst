@@ -22,8 +22,11 @@ azure-ai-inference>=1.0.0b9
 azure-core>=1.32,<2.0
 azure-identity>=1.19,<2.0
 
-# --- LLM: OpenRouter (OpenAI-compatible HTTP API) ---
+# --- LLM: OpenRouter + NVIDIA NIM (OpenAI-compatible HTTP APIs) ---
 requests>=2.32,<3.0
+
+# --- Model Context Protocol client (stable v1 line) ---
+mcp>=1.28,<2.0
 
 # --- Structured data / config ---
 pydantic>=2.9,<3.0

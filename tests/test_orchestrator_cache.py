@@ -55,6 +55,22 @@ def test_cache_key_is_case_and_whitespace_insensitive():
     assert llm.sql_call_count == 1
 
 
+def test_data_revision_change_never_serves_a_stale_cached_answer(monkeypatch):
+    revision = {"value": "revision-one"}
+    monkeypatch.setattr(
+        orchestrator, "get_active_database_revision", lambda: revision["value"]
+    )
+    llm = FakeLLMClient(sql=GOOD_SQL, relevant_tables=["DimProduct", "FactInternetSales"])
+
+    first = orchestrator.answer_question("total sales by product line", llm_client=llm)
+    revision["value"] = "revision-two"
+    second = orchestrator.answer_question("total sales by product line", llm_client=llm)
+
+    assert first.cache_hit is False
+    assert second.cache_hit is False
+    assert llm.sql_call_count == 2
+
+
 def test_answers_are_cached_separately_for_each_llm_client():
     first_llm = FakeLLMClient(
         sql=GOOD_SQL, relevant_tables=["DimProduct", "FactInternetSales"]
@@ -128,8 +144,32 @@ def test_download_contains_rows_beyond_the_analysis_window():
 
     assert response.status == "ok"
     assert response.dataframe is not None
-    assert response.download_dataframe is not None
+    assert response.download_dataframe is None
+    assert response.download_sql is not None
     assert len(response.dataframe) == 5000
-    assert response.download_row_count > len(response.dataframe)
-    assert len(response.download_dataframe) == response.download_row_count
-    assert response.download_truncated is False
+    assert all(record.stage != "download_preparation" for record in response.tool_records)
+
+    download = orchestrator.prepare_complete_download(response)
+
+    assert download.status == "ok"
+    assert download.row_count > len(response.dataframe)
+    assert download.csv_data is not None
+    assert download.truncated is False
+
+
+def test_llm_catalog_includes_only_explicit_nvidia_nim_models():
+    catalog = orchestrator.get_llm_catalog(
+        discover_ollama=False,
+        discover_openrouter=False,
+        discover_nvidia=False,
+    )
+
+    provider = catalog["nvidia_nim"]
+    assert provider["label"] == "NVIDIA NIM (cloud)"
+    assert provider["models"] == [
+        "nvidia/nemotron-3-ultra-550b-a55b",
+        "poolside/laguna-xs-2.1",
+        "z-ai/glm-5.2",
+        "minimaxai/minimax-m3",
+    ]
+    assert provider["model_details"]

@@ -21,15 +21,89 @@ def explain_error(error: object, *, stage: str = "application") -> ErrorGuidance
     reason = str(error or "An unknown error occurred.").strip()
     lowered = reason.casefold()
 
+    dns_failure = any(
+        token in lowered
+        for token in (
+            "nvidia_dns_resolution_failed",
+            "nameresolutionerror",
+            "failed to resolve",
+            "getaddrinfo failed",
+            "errno 11001",
+            "dns lookup failed",
+            "name resolution",
+        )
+    )
+    if dns_failure:
+        return ErrorGuidance(
+            "DNS could not resolve the NVIDIA service",
+            reason,
+            (
+                "Retry once; the app now retries transient NVIDIA DNS failures automatically.",
+                "In PowerShell run: Resolve-DnsName integrate.api.nvidia.com",
+                "If it times out, reconnect the network or VPN and run: ipconfig /flushdns",
+                "If the router DNS remains unreliable, use a trusted DNS resolver or ask the network administrator to allow integrate.api.nvidia.com.",
+                "Select Ollama, Azure AI Foundry, or OpenRouter while DNS is unavailable.",
+            ),
+            "network",
+        )
+
     if stage == "input" or "please enter a question" in lowered:
         return ErrorGuidance(
             "A question is required",
             reason,
             (
                 "Enter a business question that names a measure and a grouping.",
-                "Example: Show monthly internet sales for the last year.",
+                "Example: Show a documented numeric measure by month for the last year.",
             ),
             "input",
+        )
+
+    if "no usable event-date field" in lowered or "no usable temporal" in lowered:
+        return ErrorGuidance(
+            "The requested time period is not supported by this data",
+            reason,
+            (
+                "Name an exact date range and a date column visible in the active schema.",
+                "Ask the knowledge base which temporal fields are available.",
+                "If the source stores dates as text or numeric keys, rebuild metadata so the profiler can classify them.",
+            ),
+            "validation",
+        )
+
+    if "column resolution failed" in lowered:
+        return ErrorGuidance(
+            "The query referenced a column that is not available",
+            reason,
+            (
+                "Use exact table and column names shown for the active database.",
+                "Rebuild metadata if the database schema changed recently.",
+                "Clarify which documented measure or category you mean.",
+            ),
+            "validation",
+        )
+
+    if "relationship" in lowered and "join" in lowered:
+        return ErrorGuidance(
+            "The requested tables do not have a verified join path",
+            reason,
+            (
+                "Ask the knowledge base which relationships are declared or safely inferred.",
+                "Name the intended key relationship explicitly if the database documentation is incomplete.",
+                "Add a real foreign key or curate the database documentation before combining these tables.",
+            ),
+            "validation",
+        )
+
+    if "requires numeric data" in lowered or "not a discovered temporal field" in lowered:
+        return ErrorGuidance(
+            "The requested operation does not match the column data type",
+            reason,
+            (
+                "Choose a numeric column for sums/averages or a temporal column for date grouping.",
+                "Inspect the column profile and sample types in the database explorer.",
+                "Clean mixed or incorrectly typed source values before retrying.",
+            ),
+            "validation",
         )
 
     if stage == "validation":
@@ -108,7 +182,36 @@ def explain_error(error: object, *, stage: str = "application") -> ErrorGuidance
             "service",
         )
 
-    if any(token in lowered for token in ("429", "rate limit", "quota", "too many requests")):
+    rate_limited = any(
+        token in lowered
+        for token in ("429", "rate limit", "rate-limit", "quota", "too many requests")
+    )
+    if rate_limited and "openrouter" in lowered:
+        return ErrorGuidance(
+            "The selected OpenRouter model is temporarily rate-limited",
+            reason,
+            (
+                "Select another OpenRouter model in the sidebar; free-model providers have independent capacity.",
+                "Wait briefly, then retry the original model.",
+                "If every free model is limited, use Ollama/Azure or review OpenRouter account limits.",
+            ),
+            "provider",
+        )
+
+    if rate_limited and "nvidia" in lowered:
+        return ErrorGuidance(
+            "The NVIDIA request budget is temporarily exhausted",
+            reason,
+            (
+                "Leave the request queued; the app spaces calls and resumes after NVIDIA's reset window.",
+                "Check the NVIDIA request budget and request_budget events under Live agent logs.",
+                "Avoid repeatedly clicking Refresh models or Test connection while a cooldown is active.",
+                "Select another provider only when the request cannot wait for the current quota window.",
+            ),
+            "provider",
+        )
+
+    if rate_limited:
         return ErrorGuidance(
             "The LLM provider is temporarily rate-limited",
             reason,

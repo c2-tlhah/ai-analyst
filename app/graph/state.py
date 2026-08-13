@@ -32,6 +32,10 @@ class AnalystState(TypedDict, total=False):
     # picked the relevant tables, "lexical" when it fell back to keyword
     # scoring (no vector index built yet for the active database).
     retrieval_mode: Optional[str]
+    # Deterministically resolved shared period for phrases such as "last year".
+    time_context: Optional[dict[str, Any]]
+    # Presentation-safe records from deterministic database tools.
+    tool_records: list[Any]
 
     # SQL generation
     sql: Optional[str]
