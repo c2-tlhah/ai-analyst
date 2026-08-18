@@ -143,3 +143,29 @@ def test_rag_unions_hinted_tables_into_vector_selection(monkeypatch):
     )
     assert mode == "vector"
     assert set(selected) == {"FactChannel0", "FactChannel2"}
+
+
+def test_multi_hop_connector_tables_are_never_dropped():
+    table_names = ["measurements", "devices", "sites", "regions", "countries"]
+    metadata = {
+        "tables": {
+            name: {"description": f"{name} records", "columns": {}}
+            for name in table_names
+        },
+        "relationships": [
+            {
+                "from_table": table_names[index],
+                "from_column": f"link_{index}",
+                "to_table": table_names[index + 1],
+                "to_column": f"link_{index}",
+            }
+            for index in range(len(table_names) - 1)
+        ],
+    }
+
+    selected = select_relevant_tables(
+        metadata,
+        "Compare measurements by countries",
+    )
+
+    assert set(selected) == set(table_names)

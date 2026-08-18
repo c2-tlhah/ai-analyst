@@ -21,9 +21,11 @@ logger = get_logger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a data analyst documenting a business analytics database. Given a "
-    "table name, its role (fact or dimension), and a list of column names, write "
-    "concise, factual one-sentence business descriptions. Do not invent business "
-    "meaning you cannot infer from the names; keep descriptions short and neutral."
+    "table name, its structural role, and discovered column facts, write concise, "
+    "factual one-sentence descriptions. The schema may be from any domain and may "
+    "not be a warehouse. Do not assume sales, products, customers, fact/dimension "
+    "semantics, or business meaning not supported by the supplied facts. Never "
+    "repeat representative values from sensitive fields. Keep descriptions neutral."
 )
 
 

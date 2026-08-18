@@ -44,12 +44,33 @@ _TEMPORAL_HINTS = frozenset(
     {"date", "time", "timestamp", "ts", "dt", "year", "month", "day", "created", "updated"}
 )
 _FLAG_HINTS = frozenset({"flag", "status", "active", "enabled", "deleted", "valid"})
+_SENSITIVE_HINTS = frozenset(
+    {
+        "password", "passwd", "secret", "token", "credential", "api",
+        "email", "phone", "mobile", "address", "ssn", "sin", "passport",
+        "license", "dob", "birth", "firstname", "lastname", "fullname",
+        "first", "last", "name",
+    }
+)
 
 
 def _tokenize(identifier: str) -> list[str]:
     s = re.sub(r"(?<!^)(?=[A-Z])", " ", identifier)
-    s = s.replace("_", " ")
+    s = re.sub(r"[^A-Za-z0-9]+", " ", s)
     return [w.lower() for w in s.split() if w]
+
+
+def infer_data_classification(column_name: str) -> str:
+    """Classify whether representative values may be persisted in prompts/docs."""
+    tokens = _tokenize(column_name)
+    words = set(tokens)
+    compact = "".join(tokens)
+    if words & _SENSITIVE_HINTS or any(
+        marker in compact
+        for marker in ("apikey", "accesstoken", "refreshtoken", "creditcard")
+    ):
+        return "sensitive"
+    return "ordinary"
 
 
 def humanize(identifier: str) -> str:
@@ -84,13 +105,17 @@ def infer_semantic_role(
     words = set(_tokenize(column_name))
     name_l = column_name.lower()
     family = _type_family(sql_type)
-    if family == "unknown":
-        if observed_value_family in {"numeric", "numeric_text"}:
-            family = "numeric"
-        elif observed_value_family == "temporal_text":
-            family = "temporal"
-        elif observed_value_family == "text":
-            family = "text"
+    # SQLite commonly declares dates and imported numeric fields as TEXT.
+    # A uniformly observed bounded sample is stronger than TEXT affinity, but
+    # never overrides an explicitly incompatible numeric/blob declaration.
+    if observed_value_family == "temporal_text" and family in {"unknown", "text"}:
+        family = "temporal"
+    elif observed_value_family in {"numeric", "numeric_text"} and family in {
+        "unknown", "text"
+    }:
+        family = "numeric"
+    elif observed_value_family == "text" and family == "unknown":
+        family = "text"
 
     if is_pk or is_fk or name_l.endswith("key") or name_l.endswith("_id") or name_l == "id":
         return "key"
@@ -128,6 +153,7 @@ class ColumnInfo:
     sql_type: str
     nullable: bool
     is_primary_key: bool
+    is_unique: bool
     is_foreign_key: bool
     references: dict[str, Any] | None
     relationship_source: str | None
@@ -139,6 +165,7 @@ class ColumnInfo:
     sampled_non_null_count: int = 0
     sampled_null_fraction: float | None = None
     observed_value_family: str = "empty"
+    data_classification: str = "ordinary"
     relationship_constraint_id: int | None = None
     relationship_constraint_sequence: int = 0
     relationship_constraint_size: int = 1
@@ -149,6 +176,7 @@ class ColumnInfo:
             "sql_type": self.sql_type,
             "nullable": self.nullable,
             "is_primary_key": self.is_primary_key,
+            "is_unique": self.is_unique,
             "is_foreign_key": self.is_foreign_key,
             "references": self.references,
             "relationship_source": self.relationship_source,
@@ -161,6 +189,7 @@ class ColumnInfo:
             "sampled_non_null_count": self.sampled_non_null_count,
             "sampled_null_fraction": self.sampled_null_fraction,
             "observed_value_family": self.observed_value_family,
+            "data_classification": self.data_classification,
             "relationship_constraint_id": self.relationship_constraint_id,
             "relationship_constraint_sequence": self.relationship_constraint_sequence,
             "relationship_constraint_size": self.relationship_constraint_size,
@@ -170,7 +199,7 @@ class ColumnInfo:
 @dataclass
 class TableInfo:
     name: str
-    kind: str  # "dimension" | "fact" | "unknown"
+    kind: str  # structural hint: dimension/fact/entity/bridge/view/unknown
     row_count: int
     columns: list[ColumnInfo]
     object_type: str = "table"
@@ -225,6 +254,29 @@ def _foreign_keys(conn: sqlite3.Connection, table: str) -> dict[str, dict[str, A
         }
         for row in rows
     }
+
+
+def _single_column_unique_fields(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Return declared single-column UNIQUE fields, excluding partial indexes."""
+    unique: set[str] = set()
+    try:
+        rows = conn.execute(f"PRAGMA index_list({_quote_literal(table)})").fetchall()
+        for row in rows:
+            keys = set(row.keys())
+            is_unique = bool(row["unique"] if "unique" in keys else row[2])
+            is_partial = bool(row["partial"] if "partial" in keys else 0)
+            if not is_unique or is_partial:
+                continue
+            index_name = str(row["name"] if "name" in keys else row[1])
+            columns = conn.execute(
+                f"PRAGMA index_info({_quote_literal(index_name)})"
+            ).fetchall()
+            names = [str(item["name"]) for item in columns if item["name"] is not None]
+            if len(names) == 1:
+                unique.add(names[0])
+    except sqlite3.Error:
+        return set()
+    return unique
 
 
 def _classify_table_kind(table: str, has_measures: bool, has_incoming_fk: bool) -> str:
@@ -387,6 +439,7 @@ def _view_dependencies(definition: str | None, known_objects: set[str]) -> list[
 def discover_table(conn: sqlite3.Connection, table: str) -> TableInfo:
     col_rows = conn.execute(f"PRAGMA table_info({_quote_literal(table)})").fetchall()
     fk_map = _foreign_keys(conn, table)
+    unique_fields = _single_column_unique_fields(conn, table)
     row_count = int(
         conn.execute(
             f"SELECT COUNT(*) FROM (SELECT 1 FROM {_quote_identifier(table)} "
@@ -404,6 +457,7 @@ def discover_table(conn: sqlite3.Connection, table: str) -> TableInfo:
         name = row["name"]
         sql_type = row["type"] or ""
         is_pk = bool(row["pk"])
+        is_unique = is_pk or name in unique_fields
         is_fk = name in fk_map
         profile = profiles.get(name, {})
         role = infer_semantic_role(
@@ -418,7 +472,11 @@ def discover_table(conn: sqlite3.Connection, table: str) -> TableInfo:
 
         sample_values: list[Any] = []
         distinct_count: int | None = None
-        if role in {"categorical_attribute", "flag"}:
+        data_classification = infer_data_classification(name)
+        if (
+            role in {"categorical_attribute", "flag"}
+            and data_classification == "ordinary"
+        ):
             sample_values = list(profile.get("sample_values") or [])
             distinct_count = profile.get("distinct_count")
 
@@ -428,6 +486,7 @@ def discover_table(conn: sqlite3.Connection, table: str) -> TableInfo:
                 sql_type=sql_type,
                 nullable=not bool(row["notnull"]),
                 is_primary_key=is_pk,
+                is_unique=is_unique,
                 is_foreign_key=is_fk,
                 references=(
                     {
@@ -446,6 +505,7 @@ def discover_table(conn: sqlite3.Connection, table: str) -> TableInfo:
                 sampled_non_null_count=int(profile.get("sampled_non_null_count") or 0),
                 sampled_null_fraction=profile.get("sampled_null_fraction"),
                 observed_value_family=str(profile.get("observed_value_family") or "empty"),
+                data_classification=data_classification,
                 relationship_constraint_id=(
                     fk_map[name]["constraint_id"] if is_fk else None
                 ),
@@ -496,18 +556,33 @@ def discover_schema(conn: sqlite3.Connection) -> dict[str, TableInfo]:
                 referenced.add(col.references["table"])
     for name, table in tables.items():
         lowered = name.casefold()
+        if table.object_type == "view":
+            table.kind = "view"
+            continue
         if lowered.startswith("dim"):
             table.kind = "dimension"
             continue
         if lowered.startswith("fact"):
             table.kind = "fact"
             continue
-        outgoing = any(column.references for column in table.columns)
+        outgoing_count = sum(bool(column.references) for column in table.columns)
         has_measures = any(column.semantic_role == "measure" for column in table.columns)
-        if name in referenced and not outgoing:
+        has_temporal = any(column.semantic_role == "temporal" for column in table.columns)
+        primary_key = {column.name for column in table.columns if column.is_primary_key}
+        foreign_keys = {column.name for column in table.columns if column.references}
+        if (
+            outgoing_count >= 2
+            and primary_key
+            and primary_key <= foreign_keys
+            and not has_measures
+        ):
+            table.kind = "bridge"
+        elif name in referenced and not outgoing_count:
             table.kind = "dimension"
-        elif outgoing or has_measures:
+        elif has_measures or (outgoing_count and has_temporal):
             table.kind = "fact"
+        elif outgoing_count:
+            table.kind = "entity"
         else:
             table.kind = "unknown"
 
@@ -569,15 +644,17 @@ def _infer_undeclared_foreign_keys(
     """Conservatively infer common ID/key relationships absent from SQLite DDL.
 
     Many imported SQLite files omit FOREIGN KEY clauses. We infer only when a
-    candidate target is unique: an exact non-generic primary-key name match, or
-    ``customer_id``/``CustomerKey`` whose prefix matches a table with a compatible
-    primary key. Ambiguous candidates remain ordinary keys.
+    candidate target is unique: an exact non-generic primary/UNIQUE-key name
+    match, or ``customer_id``/``CustomerKey`` whose prefix matches a table with
+    a compatible unique key. Ambiguous candidates remain ordinary keys.
     """
-    primary_keys: list[tuple[str, ColumnInfo]] = []
+    unique_keys: list[tuple[str, ColumnInfo]] = []
     for table_name, table in tables.items():
-        keys = [column for column in table.columns if column.is_primary_key]
-        if len(keys) == 1:
-            primary_keys.append((table_name, keys[0]))
+        unique_keys.extend(
+            (table_name, column)
+            for column in table.columns
+            if column.is_unique
+        )
     for source_name, source in tables.items():
         # A view may project keys from its base table, but that overlap is
         # lineage—not evidence that joining the view back to the base is safe.
@@ -587,22 +664,21 @@ def _infer_undeclared_foreign_keys(
             if column.is_primary_key or column.references:
                 continue
             words = _tokenize(column.name)
-            if not words or words[-1] not in {"id", "key"}:
-                continue
-
             exact = [
                 (table_name, target)
-                for table_name, target in primary_keys
+                for table_name, target in unique_keys
                 if table_name != source_name
                 and target.name.casefold() == column.name.casefold()
                 and target.name.casefold() not in {"id", "key"}
             ]
             candidates = exact
             if not candidates:
+                if not words or words[-1] not in {"id", "key"}:
+                    continue
                 column_stem = _relation_stem("".join(words[:-1]))
                 candidates = [
                     (table_name, target)
-                    for table_name, target in primary_keys
+                    for table_name, target in unique_keys
                     if table_name != source_name
                     and column_stem
                     and _relation_stem(table_name) == column_stem
@@ -646,6 +722,7 @@ def schema_signature(tables: dict[str, TableInfo]) -> str:
                     "name": c.name,
                     "sql_type": c.sql_type,
                     "is_primary_key": c.is_primary_key,
+                    "is_unique": c.is_unique,
                     "references": c.references,
                 }
                 for c in info.columns

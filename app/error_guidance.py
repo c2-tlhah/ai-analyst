@@ -265,8 +265,8 @@ def explain_error(error: object, *, stage: str = "application") -> ErrorGuidance
             "The analytics database was not found",
             reason,
             (
-                "Run python scripts/build_database.py to create the sample database.",
-                "Verify AI_ANALYST_DB_PATH in .env.",
+                "Connect an existing SQLite file from the sidebar.",
+                "Verify AI_ANALYST_DB_PATH in .env, or import tabular files with scripts/build_database.py.",
             ),
             "database",
         )
@@ -354,8 +354,8 @@ def explain_error(error: object, *, stage: str = "application") -> ErrorGuidance
             "The data source could not be accessed",
             reason,
             (
-                "Verify AI_ANALYST_DB_PATH and that the database file is readable.",
-                "Run python scripts/build_database.py if the sample database is missing.",
+                "Verify the selected SQLite path exists and is readable.",
+                "Connect a different database, or import arbitrary tabular files with scripts/build_database.py.",
                 "Refresh the schema after repairing the data source.",
             ),
             "database",

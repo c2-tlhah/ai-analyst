@@ -52,8 +52,9 @@ can display.
 | Database MCP server + in-memory protocol client | `app/mcp_server/database.py`, `app/mcp_client/database.py` |
 | Schema discovery | `app/metadata/discovery.py` |
 | Metadata persistence + change detection | `app/metadata/store.py` |
-| Curated business context (seed) | `app/metadata/business_context_seed.py` |
-| LLM-assisted description of new tables | `app/metadata/enrichment.py` |
+| Per-database generated semantic catalog | `app/metadata/store.py` |
+| Optional neutral description enrichment | `app/metadata/enrichment.py` |
+| Generic tabular-to-SQLite importer | `scripts/build_database.py` |
 | Relevance-based metadata retrieval (lexical + vector/RAG) | `app/metadata/retrieval.py` |
 | Versioned text documents + optional Chroma index | `app/metadata/vector_store.py` |
 | Azure AI Foundry + Ollama + OpenRouter + NVIDIA NIM clients | `app/llm/client.py` |
@@ -76,17 +77,13 @@ column's semantic role (`key`, `measure`, `temporal`, `categorical_attribute`, .
 and a sensible default aggregation (`sum` for additive amounts, `avg` for
 per-unit prices/rates).
 
-`app/metadata/store.py` merges that with a business-context layer (human-curated
-seed descriptions in `app/metadata/business_context_seed.py`, falling back to
-LLM-generated or humanized-name descriptions for anything not curated) and
-persists the result as JSON:
-
-* The configured sample database retains the backward-compatible
-  `metadata_store/schema_metadata.json` and `business_context.json` files.
-* Every newly connected database uses
-  `metadata_store/databases/<database identity>/schema_metadata.json` and
-  `business_context.json`. Descriptions and glossary entries therefore never
-  leak between unrelated database files.
+`app/metadata/store.py` builds a semantic catalog from those live facts. It
+uses neutral humanized descriptions without an LLM, or optional LLM-generated
+descriptions constrained to the discovered schema. No packaged business seed
+is loaded. Every database—including the configured startup database—uses
+`metadata_store/databases/<database identity>/schema_metadata.json` and
+`semantic_context.json`, so a database replaced at the same configured path
+cannot inherit another schema's meaning.
 
 A structural schema hash, metadata-format version, and cheap database/WAL
 fingerprint are stored alongside the metadata. The in-process metadata cache
@@ -96,8 +93,8 @@ objects. Answer-cache keys also include the live database/WAL revision, so an
 updated database cannot receive a stale answer from an earlier data revision.
 
 The database MCP server calls `app/metadata/retrieval.py` to pick which tables are relevant to the
-question and returns only that slice -- expanded to include anything
-reachable via a foreign key so joins stay possible. This is what keeps the
+question and returns only that slice -- expanded with relationship neighbors
+and shortest-path connector tables so multi-hop joins stay possible. This keeps the
 LLM's context small and scoped instead of dumping the whole schema on every
 call, and it works unmodified as more tables are added. Two selection
 strategies are available and share the same output shape:
@@ -158,11 +155,10 @@ runs a fixed, bounded workflow from `app/tools/database.py`:
    `app.db.connection.set_active_database_path`) and drops the session's
    metadata/answer caches, since they described a different database.
 3. Lists attached databases and user tables, then inspects every table's
-   schema, column profile, and declared foreign-key relationships.
-4. Describes the schema -- the same deterministic discovery +
-   LLM-assisted enrichment used at startup (`app/metadata/discovery.py`,
-   `app/metadata/enrichment.py`), so curated/cached descriptions are reused
-   and only genuinely new tables/columns cost an LLM call.
+   schema, bounded column profile, declared/inferred unique keys, and relationships.
+4. Builds the database-scoped semantic catalog using deterministic discovery +
+   optional neutral LLM enrichment (`app/metadata/discovery.py`,
+   `app/metadata/enrichment.py`); only genuinely new tables/columns cost a call.
 5. Renders each table's business-enriched metadata to a versioned plain-text
    document. These files are the knowledge base's source of truth and remain
    usable without embeddings.
@@ -179,19 +175,20 @@ preparation tool and its outcome.
 ### Unseen database behavior and scope
 
 The agent does not require AdventureWorks table names. For any readable SQLite
-database it discovers ordinary tables and views (including view dependencies), arbitrary identifier names,
+database it discovers ordinary tables and views (including view dependencies), arbitrary quoted identifier names,
 SQLite declared-type families (`BIGINT`, `DECIMAL(...)`, `DATETIME`, `BOOLEAN`,
 `VARCHAR(...)`, and others), keys, categorical samples, measures, time fields,
 flags, and aggregation hints. Declared foreign keys are preferred. When an
 imported database omitted them, unique conventional matches such as
-`orders.customer_id -> customers.customer_id` are conservatively inferred only
+`orders.customer_id -> customers.customer_id` or matching UNIQUE business keys are conservatively inferred only
 when declared types are compatible and sampled source keys have strong overlap
 with a unique target key. They are labelled `inferred` with confidence in
 metadata and prompts; ambiguous, composite, orphaned, and view-to-base guesses
 are left unresolved.
 
 There is no packaged-schema SQL template or runtime business-context seed.
-Every database uses its own identity-isolated saved context, deterministic
+Sensitive-looking fields retain structural metadata but never persist sample
+values into prompts or knowledge documents. Every database uses its own identity-isolated generated context, deterministic
 profiles, optional neutral LLM descriptions, and example questions generated
 from its own tables and columns. Wide-table prompt context, profile scans, row
 counts, result previews, and downloads are independently bounded. Switching
@@ -366,14 +363,24 @@ Interactive chart requests are implemented in `app/viz/explorer.py`; invalid
 axes, unsupported chart types, non-date time grouping, and unusable scalar
 results return user-facing validation messages instead of UI exceptions.
 
-## The sample dataset
+## Optional demo data and generic imports
 
 `data/raw/*.csv` is a trimmed extract of the classic AdventureWorks DW sample
-data: **one dimension table** (`DimProduct`) and **two fact tables**
-(`FactInternetSales` -- direct consumer sales, `FactResellerSales` -- B2B/dealer
-sales), related through `ProductKey`. `scripts/build_database.py` loads it into
-`data/ai_analyst.db` (SQLite) with explicit types, primary/foreign keys, and
-indexes.
+data and `data/ai_analyst.db` is only an optional runnable demo. Neither supplies
+runtime metadata or special SQL behavior.
+
+`scripts/build_database.py` is a generic importer for CSV, TSV, JSON, JSONL, or
+Parquet directories. It preserves arbitrary table/column identifiers, infers
+conservative SQLite types and keys, and accepts an optional JSON manifest for
+exact renames, required fields, types, primary keys, and foreign keys:
+
+```bash
+python scripts/build_database.py --input C:/exports --output data/local.db
+python scripts/build_database.py --input C:/exports --manifest schema.json --force
+```
+
+You do not need this importer for an existing SQLite database—connect its path
+directly in the sidebar.
 
 ## Setup
 
@@ -385,7 +392,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # edit .env with Azure, Ollama, OpenRouter, and/or NVIDIA NIM settings (see below)
 
-python scripts/build_database.py   # builds data/ai_analyst.db from data/raw/*.csv
+# Optional: import any tabular directory into SQLite
+python scripts/build_database.py --input /path/to/exports --output data/local.db
 ```
 
 ### Azure AI Foundry (Kimi K2.6)
@@ -627,10 +635,10 @@ real `metadata_store/`/`vector_store/` directories or leave the active
 database pointed at a file that no longer exists once a test's temp
 directory is cleaned up.
 
-## Extending the schema
+## Connecting or changing a schema
 
-Add a table (or columns) to `data/ai_analyst.db` and just ask a question --
-`refresh_metadata()` detects the structural change via its schema hash,
+Connect any populated SQLite file in the sidebar, or add/change tables in the
+active database, then refresh the schema. `refresh_metadata()` detects the structural change via its schema hash,
 re-discovers it, asks the LLM for a business description of only what's new
 (or falls back to a humanized column name if no LLM is configured), persists
 the update, refreshes the versioned knowledge documents, and optionally

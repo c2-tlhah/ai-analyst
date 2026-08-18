@@ -3,9 +3,9 @@
 Rather than sending the full schema to the LLM on every call, this module
 scores each table/column against the user's question (and any table hints
 the intent-understanding node produced) and returns only the slice of
-metadata that's actually relevant -- plus anything reachable from it via a
-foreign key, so joins remain possible. This is what keeps the system
-scalable to schemas far larger than the three tables shipped here.
+metadata that's actually relevant -- plus relationship neighbors and shortest
+connector paths, so multi-hop joins remain possible. This keeps the system
+scalable across small and wide unfamiliar schemas.
 
 Two table-selection strategies are available:
 
@@ -73,6 +73,52 @@ def _tokenize(text: str) -> set[str]:
             word = word[:-1]
         tokens.add(word)
     return tokens
+
+
+def _connector_tables(
+    metadata: dict[str, Any], selected: set[str], *, max_hops: int = 6
+) -> set[str]:
+    """Find shortest relationship paths connecting independently matched tables.
+
+    Wide unseen schemas commonly require more than one intermediate entity
+    (for example event -> account -> territory -> country). Immediate-neighbor
+    expansion alone can leave a disconnected metadata slice and make a valid
+    join impossible for the model.
+    """
+    if len(selected) < 2:
+        return set()
+    graph: dict[str, set[str]] = {name: set() for name in metadata.get("tables", {})}
+    for relation in metadata.get("relationships", []):
+        left = relation.get("from_table")
+        right = relation.get("to_table")
+        if left in graph and right in graph:
+            graph[left].add(right)
+            graph[right].add(left)
+
+    connectors: set[str] = set()
+    names = sorted(selected)
+    for index, start in enumerate(names):
+        for target in names[index + 1 :]:
+            queue: list[tuple[str, list[str]]] = [(start, [start])]
+            visited = {start}
+            found: list[str] | None = None
+            while queue:
+                node, path = queue.pop(0)
+                if len(path) - 1 >= max_hops:
+                    continue
+                for neighbor in sorted(graph.get(node, ())):
+                    if neighbor in visited:
+                        continue
+                    next_path = [*path, neighbor]
+                    if neighbor == target:
+                        found = next_path
+                        queue.clear()
+                        break
+                    visited.add(neighbor)
+                    queue.append((neighbor, next_path))
+            if found:
+                connectors.update(found[1:-1])
+    return connectors
 
 
 def _score_table(table_name: str, table_meta: dict[str, Any], question_tokens: set[str]) -> int:
@@ -175,7 +221,11 @@ def select_relevant_tables(
     tables = metadata.get("tables", {})
     explicit = _explicit_table_mentions(tables, question)
     if explicit:
-        return _expand_explicit_for_missing_concepts(metadata, question, explicit)
+        expanded = _expand_explicit_for_missing_concepts(
+            metadata, question, explicit
+        )
+        connectors = _connector_tables(metadata, set(expanded))
+        return [*expanded, *sorted(connectors - set(expanded))]
     question_tokens = _tokenize(question)
 
     scores = {
@@ -199,6 +249,7 @@ def select_relevant_tables(
         selected = set(ranked[:MAX_RELEVANT_TABLES])
 
     selected |= _related_tables(metadata, selected)
+    selected |= _connector_tables(metadata, selected)
 
     return sorted(selected, key=lambda n: -scores.get(n, 0))
 
@@ -222,9 +273,11 @@ def select_relevant_tables_rag(
     if explicit:
         # "lexical" remains part of the public two-mode contract; this is its
         # exact-match fast path and intentionally bypasses vector inference.
-        return _expand_explicit_for_missing_concepts(
+        expanded = _expand_explicit_for_missing_concepts(
             metadata, question, explicit
-        ), "lexical"
+        )
+        connectors = _connector_tables(metadata, set(expanded))
+        return [*expanded, *sorted(connectors - set(expanded))], "lexical"
 
     if db_identity:
         matches = vector_store.query_relevant_tables(
@@ -249,6 +302,7 @@ def select_relevant_tables_rag(
                     selected.add(canonical)
             if selected:
                 selected |= _related_tables(metadata, selected)
+                selected |= _connector_tables(metadata, selected)
                 rank = {name: i for i, (name, _distance) in enumerate(matches)}
                 ranked_names = sorted(selected, key=lambda n: rank.get(n, len(matches)))
                 return ranked_names, "vector"
@@ -388,8 +442,11 @@ def format_metadata_for_prompt(relevant_metadata: dict[str, Any]) -> str:
                 "were omitted from this bounded request context"
             )
         lines.append(f"  description: {table['description']}")
+        lines.append(f"  grain: {table.get('grain', 'not declared')}")
         for col_name, col in table.get("columns", {}).items():
             bits = [col["sql_type"], col["semantic_role"]]
+            if col.get("is_unique"):
+                bits.append("unique")
             if col.get("is_foreign_key") and col.get("references"):
                 ref = col["references"]
                 source = col.get("relationship_source") or "declared"
@@ -408,6 +465,8 @@ def format_metadata_for_prompt(relevant_metadata: dict[str, Any]) -> str:
                 bits.append(
                     f"sample_nulls={float(col['sampled_null_fraction']):.1%}"
                 )
+            if col.get("data_classification") == "sensitive":
+                bits.append("sensitive; samples suppressed")
             lines.append(f"  - {col_name} ({', '.join(bits)}): {col['description']}")
         lines.append("")
 

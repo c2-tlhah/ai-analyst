@@ -35,8 +35,8 @@ class InvalidDatabaseSourceError(RuntimeError):
     pass
 
 
-# The database the app talks to is normally fixed by AI_ANALYST_DB_PATH, but
-# the UI's "Connect" panel lets a user point at a different SQLite file at
+# AI_ANALYST_DB_PATH supplies only the startup database; the UI's "Connect"
+# panel can activate any other SQLite file at
 # runtime. This override is process-global (matching the existing
 # process-global metadata/answer caches in app.orchestrator) rather than
 # per-Streamlit-session -- this app is single-tenant/local by design.

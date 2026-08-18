@@ -958,7 +958,7 @@ def _render_sidebar(ollama_status: ServiceStatus) -> tuple[str, str | None, bool
             st.text_input(
                 "SQLite file path or connection string",
                 key="db_source_input",
-                placeholder="e.g. data/ai_analyst.db or sqlite:///data/ai_analyst.db",
+                placeholder="e.g. C:\\data\\operations.db or sqlite:///data/local.db",
                 disabled=busy,
             )
             connect_clicked = st.form_submit_button(
@@ -966,8 +966,9 @@ def _render_sidebar(ollama_status: ServiceStatus) -> tuple[str, str | None, bool
                 disabled=busy,
             )
             st.caption(
-                "Runs audited tools for connection, tables, schemas, relationships, "
-                "descriptions, and documentation. Vector indexing is optional."
+                "Works with any populated SQLite schema. Audited tools derive "
+                "tables, types, keys, relationships, semantics, and documentation "
+                "from that database; no packaged business context is applied."
             )
         if connect_clicked:
             discovery_status = (

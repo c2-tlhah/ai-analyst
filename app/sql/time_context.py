@@ -312,15 +312,16 @@ def _candidate_event_columns(
                 ),
                 "table_kind": str(table.get("kind") or "unknown"),
             }
+    non_event_kinds = {"dimension", "entity", "bridge", "lookup"}
     event_sources = {
         name: candidate
         for name, candidate in candidates.items()
-        if candidate["table_kind"] != "dimension"
+        if candidate["table_kind"].casefold() not in non_event_kinds
     }
-    explicitly_named_dimensions = {
+    explicitly_named_non_events = {
         name: candidate
         for name, candidate in candidates.items()
-        if candidate["table_kind"] == "dimension"
+        if candidate["table_kind"].casefold() in non_event_kinds
         and re.search(
             rf"(?<![A-Za-z0-9_]){re.escape(name)}(?![A-Za-z0-9_])",
             question,
@@ -328,7 +329,7 @@ def _candidate_event_columns(
         )
     }
     selected = event_sources or candidates
-    return {**selected, **explicitly_named_dimensions}
+    return {**selected, **explicitly_named_non_events}
 
 
 def resolve_relative_time_context(

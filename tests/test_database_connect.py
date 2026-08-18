@@ -97,6 +97,16 @@ def test_connect_reports_a_clear_error_for_a_missing_file(tmp_path):
     assert "No file found" in result.message
 
 
+def test_connect_rejects_an_empty_database_with_actionable_reason(tmp_path):
+    empty = tmp_path / "empty.db"
+    sqlite3.connect(empty).close()
+
+    result = orchestrator.connect_database(str(empty))
+
+    assert result.success is False
+    assert "contains no user tables or views" in result.message
+
+
 def test_connect_accepts_a_sqlite_connection_string(tmp_path, _isolated_environment):
     real_settings = _isolated_environment
     copy_path = tmp_path / "copy2.db"
@@ -302,7 +312,75 @@ def test_unseen_database_is_discovered_documented_and_queried_end_to_end(tmp_pat
     assert any(source.table_name == "orders" for source in knowledge.sources)
 
 
-def test_metadata_and_business_context_are_isolated_per_unseen_database(
+def test_unseen_nonwarehouse_schema_with_unique_keys_and_quoted_names(tmp_path):
+    database = tmp_path / "telemetry.db"
+    conn = sqlite3.connect(database)
+    conn.executescript(
+        """
+        CREATE TABLE locations (
+            location_id INTEGER PRIMARY KEY,
+            "warehouse-code" TEXT NOT NULL UNIQUE,
+            label TEXT
+        );
+        CREATE TABLE sensors (
+            sensor_id INTEGER PRIMARY KEY,
+            "warehouse-code" TEXT,
+            sensor_name TEXT
+        );
+        CREATE TABLE "Metric Events" (
+            event_id INTEGER PRIMARY KEY,
+            sensor_id INTEGER,
+            "observed-on" TEXT,
+            "reading.value" NUMERIC
+        );
+        INSERT INTO locations VALUES (1, 'N-1', 'North'), (2, 'S-1', 'South');
+        INSERT INTO sensors VALUES (10, 'N-1', 'private-a'), (20, 'S-1', 'private-b');
+        INSERT INTO "Metric Events" VALUES
+            (100, 10, '2026-04-01', 1.5),
+            (101, 10, '2026-04-02', 2.5),
+            (102, 20, '2026-04-03', 5.0);
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    connected = orchestrator.connect_database(str(database))
+    assert connected.success is True
+    metadata = store.load_schema_metadata()
+    assert metadata["glossary"] == {}
+    assert metadata["tables"]["sensors"]["kind"] == "entity"
+    assert metadata["tables"]["sensors"]["columns"]["sensor_name"][
+        "data_classification"
+    ] == "sensitive"
+    assert any(
+        relation["from_table"] == "sensors"
+        and relation["from_column"] == "warehouse-code"
+        and relation["to_table"] == "locations"
+        and relation["to_column"] == "warehouse-code"
+        for relation in metadata["relationships"]
+    )
+
+    llm = FakeLLMClient(
+        sql=(
+            'SELECT l.label, SUM(e."reading.value") AS total_reading '
+            'FROM "Metric Events" AS e JOIN sensors AS s '
+            'ON e.sensor_id = s.sensor_id JOIN locations AS l '
+            'ON s."warehouse-code" = l."warehouse-code" '
+            'GROUP BY l.label ORDER BY total_reading DESC'
+        ),
+        relevant_tables=["Metric Events", "sensors", "locations"],
+    )
+    response = orchestrator.answer_question(
+        "What is the total reading value by location label?",
+        llm_client=llm,
+        use_cache=False,
+    )
+
+    assert response.status == "ok"
+    assert response.dataframe["total_reading"].sum() == pytest.approx(9.0)
+
+
+def test_metadata_and_semantic_context_are_isolated_per_unseen_database(
     tmp_path, monkeypatch
 ):
     current = config_module.get_settings()
@@ -339,4 +417,17 @@ def test_metadata_and_business_context_are_isolated_per_unseen_database(
     assert orchestrator.connect_database(str(first)).success
     assert store.metadata_paths() == first_paths
     assert set(store.load_schema_metadata()["tables"]) == {"apples"}
-    assert store.load_business_context()["glossary"] == {}
+    assert store.load_semantic_context()["glossary"] == {}
+
+
+def test_even_configured_database_uses_identity_scoped_generated_context(
+    _isolated_environment,
+):
+    connection.set_active_database_path(None)
+
+    schema_path, context_path = store.metadata_paths()
+
+    identity = connection.get_active_database_identity()
+    assert schema_path.parent.name == identity
+    assert context_path.parent == schema_path.parent
+    assert context_path.name == "semantic_context.json"

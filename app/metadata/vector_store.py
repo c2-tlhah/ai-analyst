@@ -109,8 +109,11 @@ def _table_document(
     ]
     if table.get("depends_on"):
         lines.append("Derived from: " + ", ".join(table["depends_on"]))
+    lines.append(f"Grain: {table.get('grain', 'not declared')}")
     for col_name, col in table.get("columns", {}).items():
         bits = [b for b in (col.get("sql_type"), col.get("semantic_role")) if b]
+        if col.get("is_unique"):
+            bits.append("unique")
         if col.get("is_foreign_key") and col.get("references"):
             ref = col["references"]
             source = col.get("relationship_source") or "declared"
@@ -121,6 +124,8 @@ def _table_document(
             bits.append(f"observed family: {col['observed_value_family']}")
         if col.get("sampled_null_fraction") is not None:
             bits.append(f"sample nulls: {float(col['sampled_null_fraction']):.1%}")
+        if col.get("data_classification") == "sensitive":
+            bits.append("sensitive; samples suppressed")
         descriptor = f" ({', '.join(bits)})" if bits else ""
         lines.append(f"{col_name}{descriptor}: {col.get('description') or ''}")
 

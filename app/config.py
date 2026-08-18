@@ -319,23 +319,15 @@ class MetadataConfig:
         default_factory=lambda: _get_int("METADATA_LLM_ENRICH_BATCH_SIZE", 12)
     )
 
-    @property
-    def schema_file(self) -> Path:
-        return self.directory / "schema_metadata.json"
-
-    @property
-    def business_context_file(self) -> Path:
-        return self.directory / "business_context.json"
-
     def database_directory(self, db_identity: str) -> Path:
-        """Isolated metadata directory for a non-default connected database."""
+        """Isolated runtime metadata directory for any connected database."""
         return self.directory / "databases" / db_identity
 
     def schema_file_for(self, db_identity: str) -> Path:
         return self.database_directory(db_identity) / "schema_metadata.json"
 
-    def business_context_file_for(self, db_identity: str) -> Path:
-        return self.database_directory(db_identity) / "business_context.json"
+    def semantic_context_file_for(self, db_identity: str) -> Path:
+        return self.database_directory(db_identity) / "semantic_context.json"
 
 
 @dataclass(frozen=True)

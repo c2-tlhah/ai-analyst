@@ -1,3 +1,5 @@
+import sqlite3
+
 from app.db.connection import readonly_connection
 from app.metadata import discovery, store
 
@@ -128,4 +130,44 @@ def test_name_match_without_data_overlap_is_not_treated_as_a_join():
     assert person_id.references is None
     assert person_id.is_foreign_key is False
     conn.close()
-import sqlite3
+
+
+def test_unique_business_keys_and_sensitive_fields_are_discovered_safely():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE accounts (
+            internal_id INTEGER PRIMARY KEY,
+            account_code TEXT NOT NULL UNIQUE,
+            contact_email TEXT
+        );
+        CREATE TABLE readings (
+            reading_id INTEGER PRIMARY KEY,
+            account_code TEXT,
+            captured_at TEXT,
+            energy_kwh REAL
+        );
+        INSERT INTO accounts VALUES
+            (1, 'AC-10', 'private-one@example.com'),
+            (2, 'AC-20', 'private-two@example.com');
+        INSERT INTO readings VALUES
+            (100, 'AC-10', '2026-01-01T00:00:00', 3.5),
+            (101, 'AC-20', '2026-01-02T00:00:00', 4.0);
+        """
+    )
+
+    tables = discovery.discover_schema(conn)
+    accounts = {column.name: column for column in tables["accounts"].columns}
+    readings = {column.name: column for column in tables["readings"].columns}
+
+    assert accounts["account_code"].is_unique is True
+    assert readings["account_code"].references == {
+        "table": "accounts",
+        "column": "account_code",
+    }
+    assert readings["account_code"].relationship_source == "inferred"
+    assert accounts["contact_email"].data_classification == "sensitive"
+    assert accounts["contact_email"].sample_values == []
+    assert readings["captured_at"].semantic_role == "temporal"
+    conn.close()

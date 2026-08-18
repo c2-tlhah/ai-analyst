@@ -39,7 +39,7 @@ def test_new_table_descriptions_are_batched_into_one_llm_request():
 
     metadata, _context = store.build_metadata(
         conn,
-        business_ctx={"tables": {}, "glossary": {}},
+        semantic_ctx={"tables": {}, "glossary": {}},
         enrich_fn=enrich_fn,
     )
 

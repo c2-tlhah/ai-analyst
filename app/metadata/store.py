@@ -9,9 +9,9 @@ the database (or sending the raw schema) on every request.
 
 Two files are maintained per connected database:
 
-* ``business_context.json`` -- human/LLM-authored descriptions, keyed by
-  table/column name. Survives schema rebuilds; new tables/columns are
-  appended to it (never silently dropped), so curation accumulates.
+* ``semantic_context.json`` -- database-scoped deterministic/LLM descriptions,
+  keyed by table/column name. It is generated independently for each database
+  identity and never seeded from a packaged schema.
 * ``schema_metadata.json`` -- the full merged metadata consumed by the
   application, plus a structural hash used to detect drift.
 
@@ -35,7 +35,7 @@ from app.logging_config import get_logger
 from app.metadata import discovery
 
 logger = get_logger(__name__)
-METADATA_FORMAT_VERSION = 5
+METADATA_FORMAT_VERSION = 6
 
 # enrich_fn(table_name, kind, column_names, schema_context)
 #   -> {"table": str, "columns": {col: str}}
@@ -62,23 +62,21 @@ def _source_fingerprint() -> dict[str, int]:
 def metadata_paths() -> tuple[Path, Path]:
     """Return schema/context files isolated for the active database.
 
-    The configured default database keeps the legacy top-level paths so
-    existing curated installations migrate without losing their context.
-    Every other database receives a stable identity-scoped directory.
+    Every database, including the configured startup database, gets an
+    identity-scoped directory. Treating one configured file specially made it
+    possible for packaged/demo context to influence a replacement database at
+    the same path. Runtime discovery is now the source of schema facts for
+    every connection.
     """
     settings = get_settings()
-    active = get_active_database_path().resolve(strict=False)
-    configured = settings.database.path.resolve(strict=False)
-    if active == configured:
-        return settings.metadata.schema_file, settings.metadata.business_context_file
     identity = get_active_database_identity()
     return (
         settings.metadata.schema_file_for(identity),
-        settings.metadata.business_context_file_for(identity),
+        settings.metadata.semantic_context_file_for(identity),
     )
 
 
-def load_business_context(path: Path | None = None) -> dict[str, Any]:
+def load_semantic_context(path: Path | None = None) -> dict[str, Any]:
     p = path or metadata_paths()[1]
     if p.exists():
         with p.open("r", encoding="utf-8") as f:
@@ -86,7 +84,7 @@ def load_business_context(path: Path | None = None) -> dict[str, Any]:
     return {"tables": {}, "glossary": {}}
 
 
-def save_business_context(ctx: dict[str, Any], path: Path | None = None) -> None:
+def save_semantic_context(ctx: dict[str, Any], path: Path | None = None) -> None:
     p = path or metadata_paths()[1]
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("w", encoding="utf-8") as f:
@@ -95,12 +93,12 @@ def save_business_context(ctx: dict[str, Any], path: Path | None = None) -> None
 
 def _describe_table_and_columns(
     table: discovery.TableInfo,
-    business_ctx: dict[str, Any],
+    semantic_ctx: dict[str, Any],
     enrich_fn: Optional[EnrichFn],
     generated_override: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, str], dict[str, str], str | None]:
     """Return (table_description, {col: description}, {col: agg_override}, default_measure)."""
-    tables_ctx = business_ctx.setdefault("tables", {})
+    tables_ctx = semantic_ctx.setdefault("tables", {})
     entry = tables_ctx.get(table.name)
 
     known_columns = set(entry["columns"].keys()) if entry else set()
@@ -157,20 +155,47 @@ def _describe_table_and_columns(
     )
 
 
+def _infer_default_measure(measures: dict[str, str]) -> str | None:
+    """Choose a default only when identifier evidence provides a clear winner."""
+    scored: list[tuple[int, str]] = []
+    for name, aggregation in measures.items():
+        if aggregation != "sum":
+            continue
+        words = set(discovery.humanize(name).casefold().split())
+        score = 0
+        if "revenue" in words:
+            score += 10
+        if "sales" in words:
+            score += 7
+        if "amount" in words:
+            score += 4
+        if "total" in words or "net" in words:
+            score += 2
+        if words & {"cost", "tax", "discount", "freight", "quantity", "qty"}:
+            score -= 2
+        scored.append((score, name))
+    if not scored:
+        return None
+    scored.sort(key=lambda item: (-item[0], item[1].casefold()))
+    best_score, best_name = scored[0]
+    runner_up = scored[1][0] if len(scored) > 1 else -1
+    return best_name if best_score >= 4 and best_score > runner_up else None
+
+
 def build_metadata(
     conn: sqlite3.Connection,
-    business_ctx: dict[str, Any] | None = None,
+    semantic_ctx: dict[str, Any] | None = None,
     enrich_fn: Optional[EnrichFn] = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Discover the live schema and merge it with business context.
+    """Discover the live schema and merge it with database-scoped semantics.
 
-    Returns ``(metadata, updated_business_ctx)`` -- the caller is
+    Returns ``(metadata, updated_semantic_ctx)`` -- the caller is
     responsible for persisting both (see :func:`refresh_if_needed`).
     """
     tables = discovery.discover_schema(conn)
-    business_ctx = business_ctx if business_ctx is not None else load_business_context()
-    business_ctx.setdefault("tables", {})
-    business_ctx.setdefault("glossary", {})
+    semantic_ctx = semantic_ctx if semantic_ctx is not None else load_semantic_context()
+    semantic_ctx.setdefault("tables", {})
+    semantic_ctx.setdefault("glossary", {})
     schema_hash = discovery.schema_signature(tables)
 
     # New databases often contain many tables. Enrich all missing descriptions
@@ -180,7 +205,7 @@ def build_metadata(
     enrich_many = getattr(enrich_fn, "enrich_many", None) if enrich_fn else None
     if callable(enrich_many):
         requests: list[dict[str, Any]] = []
-        tables_ctx = business_ctx.setdefault("tables", {})
+        tables_ctx = semantic_ctx.setdefault("tables", {})
         for table in tables.values():
             entry = tables_ctx.get(table.name)
             known_columns = set(entry.get("columns", {})) if entry else set()
@@ -205,13 +230,13 @@ def build_metadata(
             batch_generated = {}
 
     metadata_tables: dict[str, Any] = {}
-    relationships: list[dict[str, str]] = []
+    relationships: list[dict[str, Any]] = []
     aggregation_rules: dict[str, Any] = {}
 
     for name, table in sorted(tables.items()):
         table_desc, col_desc, agg_overrides, default_measure = _describe_table_and_columns(
             table,
-            business_ctx,
+            semantic_ctx,
             enrich_fn,
             (
                 batch_generated.get(table.name, {})
@@ -245,6 +270,9 @@ def build_metadata(
                         "to_column": col.references["column"],
                         "source": col.relationship_source or "declared",
                         "confidence": 1.0 if col.relationship_source == "declared" else 0.8,
+                        "cardinality": (
+                            "one_to_one" if col.is_unique else "many_to_one"
+                        ),
                         "constraint_id": col.relationship_constraint_id,
                         "constraint_sequence": col.relationship_constraint_sequence,
                         "constraint_size": col.relationship_constraint_size,
@@ -259,13 +287,26 @@ def build_metadata(
             "row_count": table.row_count,
             "row_count_is_lower_bound": table.row_count_is_lower_bound,
             "primary_key": primary_key,
+            "unique_columns": [
+                col.name for col in table.columns if col.is_unique
+            ],
+            "grain": (
+                "one row per unique combination of " + ", ".join(primary_key)
+                if primary_key
+                else "row grain is not declared; do not assume row uniqueness"
+            ),
             "columns": columns,
         }
 
         if measures:
+            inferred_default = _infer_default_measure(measures)
             aggregation_rules[name] = {
                 "measures": measures,
-                "default_measure": default_measure if default_measure in measures else None,
+                "default_measure": (
+                    default_measure
+                    if default_measure in measures
+                    else inferred_default
+                ),
             }
 
     metadata = {
@@ -278,9 +319,9 @@ def build_metadata(
         "tables": metadata_tables,
         "relationships": relationships,
         "aggregation_rules": aggregation_rules,
-        "glossary": business_ctx.get("glossary", {}),
+        "glossary": semantic_ctx.get("glossary", {}),
     }
-    return metadata, business_ctx
+    return metadata, semantic_ctx
 
 
 def load_schema_metadata(path: Path | None = None) -> dict[str, Any] | None:
@@ -339,9 +380,9 @@ def refresh_if_needed(
     logger.info(
         "Schema change detected (or no cache present); rebuilding metadata store."
     )
-    metadata, business_ctx = build_metadata(conn, enrich_fn=enrich_fn)
+    metadata, semantic_ctx = build_metadata(conn, enrich_fn=enrich_fn)
     save_schema_metadata(metadata)
-    save_business_context(business_ctx)
+    save_semantic_context(semantic_ctx)
     return metadata, True
 
 

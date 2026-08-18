@@ -292,7 +292,12 @@ def connect_database(
         run_tool("get_database_info")
         # One deterministic, read-only tool performs the related schema,
         # profile, key, and relationship inspection work in one DB pass.
-        run_tool("inspect_database_schema")
+        inspection = run_tool("inspect_database_schema")
+        if not inspection.get("tables"):
+            raise DatabaseToolError(
+                "The database is readable but contains no user tables or views. "
+                "Connect a populated SQLite database before building its catalog."
+            )
         metadata = run_tool("generate_descriptions", llm_client=llm_client)
         documents = run_tool(
             "generate_knowledge_documents",
@@ -386,7 +391,7 @@ def get_active_database_info() -> dict[str, Any]:
         "vector_document_count": stats.get("document_count", 0),
         "vector_text_export_path": stats.get("text_export_path"),
         "schema_metadata_path": str(schema_path),
-        "business_context_path": str(context_path),
+        "semantic_context_path": str(context_path),
     }
 
 
